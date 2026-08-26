@@ -1,0 +1,187 @@
+// Flight change alert service.
+//
+// The single most important decision in this file: a flight's identity is NOT
+// its flight number. The flight number is one of the two things we are asked to
+// detect changes in, so keying on it would make a renumbering look like "one
+// flight vanished and a different one appeared" instead of "this flight's
+// number changed". Identity is our own uuid; the provider's id is a correlation
+// key, scoped by which provider issued it.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Provider {
+  FIXTURE
+  FR24
+}
+
+enum FlightStatus {
+  SCHEDULED
+  AIRBORNE
+  ARRIVED
+  CANCELLED
+  /// actual_off == actual_on: the provider suspects it landed but cannot
+  /// confirm. Treating this as ARRIVED would stop tracking a flight whose
+  /// outcome was never established.
+  RESULT_UNKNOWN
+}
+
+enum ChangeField {
+  FLIGHT_NUMBER
+  AIRCRAFT_REGISTRATION
+}
+
+enum IngestOutcome {
+  /// First time we have seen this flight. Recorded, but raises no alerts.
+  CREATED
+  APPLIED
+  DUPLICATE
+  /// Arrived out of order: older than what we already hold.
+  STALE
+  NO_CHANGE
+  REJECTED
+}
+
+enum Severity {
+  INFO
+  WARNING
+}
+
+enum AlertStatus {
+  UNREAD
+  ACKNOWLEDGED
+}
+
+model Flight {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Opaque per-provider identifier (fr24_id / fa_flight_id). Unique only
+  /// within one provider's namespace, hence the composite key below.
+  providerFlightId String   @db.VarChar(64)
+  providerSource   Provider
+
+  /// MUTABLE. Detected, never used as identity.
+  flightNumber String @db.VarChar(16)
+  /// MUTABLE. Detected.
+  aircraftRegistration String? @db.VarChar(16)
+  /// Mode-S transponder code, burned into the airframe. A registration can be
+  /// reassigned between airframes; this cannot. Used to tell a data correction
+  /// apart from a genuine aircraft swap.
+  aircraftHex   String? @db.VarChar(8)
+  aircraftType  String? @db.VarChar(8)
+
+  /// Local departure date at the origin, not UTC. A flight leaving 23:50 and
+  /// landing the next day belongs to its departure date. Serialised to the wire
+  /// as a YYYY-MM-DD string, never as an instant.
+  flightDate  DateTime @db.Date
+  /// ICAO. Nullable because FR24 marks every field except fr24_id as nullable.
+  origin      String? @db.VarChar(8)
+  destination String? @db.VarChar(8)
+
+  /// Nullable on purpose: FR24 publishes no scheduling data at all
+  /// ("we do not provide flight scheduling information via our API"), so this
+  /// is null for every FR24-sourced flight and the polling tiers fall back to
+  /// deriving cadence from status.
+  scheduledDeparture DateTime? @db.Timestamptz(3)
+  status             FlightStatus @default(SCHEDULED)
+  arrivedAt          DateTime?    @db.Timestamptz(3)
+
+  /// Optimistic lock. Every state transition is a compare-and-swap on this
+  /// value, which is also what makes each change recordable exactly once.
+  revision Int @default(0)
+
+  /// The PROVIDER's clock. Used only for ordering, never for freshness.
+  sourceTimestamp DateTime  @db.Timestamptz(3)
+  /// OUR clock, last time a snapshot actually changed or confirmed state.
+  /// Drives the staleness badge.
+  lastSyncedAt    DateTime  @db.Timestamptz(3)
+  /// Every poll attempt, successful or not. Distinct from lastSyncedAt.
+  lastPolledAt    DateTime  @default(now()) @db.Timestamptz(3)
+  /// When the sweep should next consider this flight.
+  nextPollAt      DateTime? @db.Timestamptz(3)
+  trackingActive  Boolean   @default(true)
+  lastError       String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  changes FlightChange[]
+  alerts  Alert[]
+
+  @@unique([providerSource, providerFlightId])
+  @@index([trackingActive, nextPollAt])
+}
+
+/// Replay guard. Only written where a delivery actually carries an id — the
+/// signed ingest endpoint. The poll path has none: FR24 issues no event id and
+/// its payload timestamp changes on every call (measured: three consecutive
+/// calls for identical static data produced three different payload hashes), so
+/// hashing there would never once deduplicate.
+model IngestEvent {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  eventId          String        @unique @db.VarChar(128)
+  providerFlightId String        @db.VarChar(64)
+  payloadHash      String        @db.VarChar(64)
+  outcome          IngestOutcome
+  receivedAt       DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([receivedAt])
+}
+
+/// Immutable history. Never updated, never deleted.
+model FlightChange {
+  id       String @id @default(uuid(7)) @db.Uuid
+  flightId String @db.Uuid
+  flight   Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+
+  field ChangeField
+  /// The flight's revision BEFORE this change. Part of the uniqueness key
+  /// instead of the values, because an aircraft can swap back and forth:
+  /// ATC -> BRD -> ATC -> BRD is three real changes, and a value-based key
+  /// would suppress the third as a duplicate of the first.
+  fromRevision Int
+  toRevision   Int
+  /// Null only on a first observation.
+  oldValue String? @db.VarChar(32)
+  newValue String  @db.VarChar(32)
+
+  detectedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  alert Alert?
+
+  /// History integrity invariant. The compare-and-swap already enforces this;
+  /// the index makes it unviolatable even if the lock is later got wrong.
+  @@unique([flightId, field, fromRevision])
+  @@index([flightId, detectedAt])
+}
+
+/// The operational notification derived from a change. Unlike a change, it has
+/// a lifecycle: it can be read and acknowledged.
+model Alert {
+  id       String @id @default(uuid(7)) @db.Uuid
+  flightId String @db.Uuid
+  flight   Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+
+  /// One alert per change, enforced by the database rather than by a check in
+  /// application code that a race could slip past.
+  changeId String       @unique @db.Uuid
+  change   FlightChange @relation(fields: [changeId], references: [id], onDelete: Cascade)
+
+  severity Severity    @default(INFO)
+  status   AlertStatus @default(UNREAD)
+  title    String      @db.VarChar(64)
+  body     String      @db.VarChar(256)
+
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  acknowledgedAt DateTime? @db.Timestamptz(3)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([flightId, createdAt(sort: Desc)])
+}
