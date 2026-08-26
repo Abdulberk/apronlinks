@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv } from './config/env';
+import { PrismaModule } from './prisma/prisma.module';
+import { IngestModule } from './ingest/ingest.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { validateEnv } from './config/env';
         ],
       },
     }),
+    PrismaModule,
+    IngestModule,
   ],
 })
 export class AppModule {}
