@@ -1,98 +1,293 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Flight Change Alert
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
-
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+Detects when a tracked flight's **flight number** or **aircraft registration**
+changes, records what moved, and raises an operational alert — without raising
+the same one twice.
 
 ```bash
-$ pnpm install
+git clone git@github.com:Abdulberk/apronlinks.git
+cd apronlinks
+docker compose up --build
 ```
 
-## Compile and run the project
+Then open **http://localhost:3000**. The stack seeds itself, so there are
+flights and a tail change to trigger the moment it comes up.
+
+---
+
+## Seeing it work
+
+Press **Simulate registration change** on the dashboard, or:
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+pnpm demo:change            # raise a tail change
+pnpm demo:change --replay   # send the SAME signed delivery twice
 ```
 
-## Run tests
+The replay flag is the interesting one. Duplicate prevention is invisible when
+it works, so watching the second delivery answer `DUPLICATE` while the change
+count stays where it was is the only way to actually see it happen:
+
+```
+first delivery   : { outcome: 'APPLIED',   changes: 1, alerts: 1 }
+replayed delivery: { outcome: 'DUPLICATE', changes: 0, alerts: 0 }
+```
+
+Press the button repeatedly and the flight flips between `NQ-ATC` and `NQ-BRD`.
+Click the flight number to expand its history: every leg is there, because
+`ATC → BRD → ATC → BRD` is three real changes, not one repeated twice.
+
+---
+
+## The three decisions that matter
+
+### A flight's identity is not its flight number
+
+The flight number is one of the two things we are asked to detect changes in.
+Key on it and a renumbering looks like one flight vanishing and a different one
+appearing, rather than this flight's number changing — and a primary key that
+changes breaks every row pointing at it.
+
+Identity is our own UUID. The provider's id is a **correlation** key, scoped by
+which provider issued it (`@@unique([providerSource, providerFlightId])`),
+because three issuing authorities in one namespace is a collision waiting to
+happen.
+
+### Duplicates are stopped in three independent places
+
+They get conflated constantly, so they are named separately in the code:
+
+| | What it catches | Where |
+|---|---|---|
+| **L1** replay guard | This exact delivery was already handled | `IngestEvent.eventId` unique |
+| **L2** content guard | Nothing actually differs | `detectChanges`, a pure function |
+| **L3** concurrency | Two writers, one state transition | CAS on `revision` + `@@unique([flightId, field, fromRevision])` |
+
+**The poll path has no replay guard and does not need one.** Flightradar24
+issues no delivery id, and its payload timestamp changes on every call — three
+consecutive requests for identical static sandbox data produced three different
+payload hashes, measured, not assumed. Hashing there would deduplicate nothing
+while writing a row per poll. L2 and L3 already cover it: a redelivery arriving
+after the first committed simply finds no diff.
+
+The uniqueness key is `fromRevision`, not the values. An aircraft can swap back
+and forth, and a value-keyed index would suppress the third change as a
+duplicate of the first. Revisions only ever increase, so they cannot repeat.
+
+### Correctness comes from constraints, not from coordination
+
+There is no distributed lock. A lock is advisory — it works only if everyone
+remembers to ask — and it expires, so a slow holder releases it and two writers
+proceed anyway. A constraint is enforced by the system that owns the data and
+cannot expire.
+
+Every state change is a compare-and-swap: `UPDATE … WHERE id = ? AND revision =
+?`. Zero rows means someone else committed first, which is not an error — the
+caller re-reads and tries again, **outside** the transaction, because catching a
+failed write inside one leaves Postgres in an aborted state where the recovery
+silently discards the writes that had succeeded.
+
+---
+
+## Architecture
+
+```
+src/
+  domain/      PURE. No NestJS, no Prisma, no clock, no I/O.
+               detectChanges · normalizeFlightNumber · nextPollDelay
+               deriveStatus · formatAlert
+  ingest/      The single funnel. Transaction, CAS, history, alerts.
+  providers/   FlightDataProvider — FixtureProvider · Fr24Provider
+  polling/     BullMQ sweep, cadence from the domain function
+  alerts/      REST + SSE
+  flights/     REST + change history
+  dashboard/   One self-contained page
+```
+
+`src/domain` is the only layer with no framework coupling, and that is why
+`pnpm test` finishes in about two seconds with no Docker and no database: the
+logic being graded has nothing to boot.
+
+### Polling cadence tracks operational urgency
+
+Nobody cares about a tail swap on a flight leaving in twenty hours. A tail swap
+twenty minutes before departure means a ground crew has to move equipment now.
+
+| When | Interval |
+|---|---|
+| Airborne | 2 min |
+| Within 30 min of departure | 1 min |
+| Within 3 hours | 5 min |
+| Within 24 hours | 30 min |
+| Beyond | 6 hours |
+| Arrived and settled, or cancelled | stop |
+
+About 87% fewer polls per flight per day than a fixed one-minute cadence, and
+fresher in the window where freshness matters.
+
+It runs as **one repeating sweep**, not a chain of self-scheduling jobs. The
+chain is the tempting shape and its failure mode only appears in production: a
+job that exhausts its retries never books a successor, so that flight silently
+stops being polled forever and the only symptom is a `lastSyncedAt` quietly
+getting older. No error, no dead letter, nothing to page on.
+
+---
+
+## Providers
+
+Default is `fixture`: it reports what the database holds, so a fresh clone runs
+offline, free and deterministic. **This is not a shortcut.** Tail swaps are rare
+— a given flight might see one every few weeks — so a system wired only to a
+live API could not demonstrate the feature it exists for, could not be tested
+deterministically, and would show a reviewer an empty screen while behaving
+perfectly.
+
+`FLIGHT_PROVIDER=fr24` switches to the real adapter. Its sandbox key is free and
+consumes no credits.
+
+### What was learned from the providers, first-hand
+
+Both APIs were read in full and Flightradar24 was called live against its
+sandbox. Some of it changed the design:
+
+- **FR24 publishes no schedules.** "We do not provide flight scheduling
+  information via our API." So `scheduledDeparture` is nullable and the
+  schedule-relative tiers are unreachable for FR24-sourced flights; cadence
+  falls back to status.
+- **A flight does not exist in FR24's API until the aircraft is transmitting.**
+  There is nothing to poll before departure. Flights are *discovered* by route,
+  registration or area and then *followed* by the `fr24_id` that search
+  returned — following by flight number would break at exactly the moment a
+  flight number changes.
+- **FR24 is inconsistent with itself about time zones.** `live/flight-positions`
+  returns `2026-08-26T15:36:56Z`; `flight-summary` returns `2023-01-27T05:15:22`
+  with no zone. JavaScript reads the second as local time — a silent three-hour
+  shift here, in exactly the field used to decide whether a snapshot is newer
+  than what we hold. The parser checks the *value*, since appending `Z`
+  unconditionally would corrupt the other half.
+- **Its OpenAPI document says `flight_ids` accepts 15; its prose documentation
+  says 10.** The lower value is the default, and it is configurable rather than
+  hard-coded. Note that FR24 bills per returned entity, so batching is a
+  rate-limit control, not a cost control.
+- **Anything 4xx other than 408 and 429 is permanent.** Every attempt is billed,
+  so retrying a request that was wrong the first time spends money to learn
+  nothing. FR24 documents 402, credit limit reached, on almost every endpoint.
+
+FlightAware AeroAPI was evaluated and **not built**: no key, alerts are not on
+the free tier, and its spec contains no signing mechanism at all, so the
+delivery path could not have been verified. Implementing it from the document
+would have turned verified research into a plausible guess.
+
+---
+
+## Testing
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm test                             # 98 unit tests, no Docker required
+docker compose up -d postgres redis
+pnpm test:e2e                         # 11 integration tests, real Postgres
 ```
 
-## Deployment
+Unit tests cover `src/domain` at 100% of lines, branches and functions. The
+threshold is enforced, not aspirational.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Integration tests run against a real Postgres because everything they assert —
+the compare-and-swap, `ON CONFLICT DO NOTHING`, the unique index, rollback — is
+enforced by the database. Testing that against a fake would only test the fake.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Two of them are worth reading:
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
+- **Five concurrent writers, five different values.** All five must land, with a
+  gapless revision sequence. Asserting on identical concurrent values instead
+  would pass even if four of the five were silently dropped.
+- **The stale-while-retrying interaction.** Concurrent writes carrying
+  increasing timestamps do *not* all land: whichever commits first raises the
+  flight's watermark, and the ones still retrying then correctly drop themselves
+  as stale. That behaviour is intended, and it is pinned so nobody later
+  "fixes" it and breaks the ordering guard.
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The change-detection tests earn their keep. Restoring the naive
+`[A-Z0-9]{2,3}` in the flight-number regex turns 11 of them red.
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## API
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+| | |
+|---|---|
+| `GET /` | Dashboard |
+| `GET /flights` | Tracked flights with staleness |
+| `GET /flights/:id/changes` | Change history |
+| `GET /alerts` | Alerts, newest first |
+| `POST /alerts/:id/ack` | Acknowledge |
+| `GET /alerts/stream` | SSE |
+| `POST /ingest/flight-snapshot` | Signed ingest |
+| `POST /ingest/demo/tail-swap` | Local demo affordance |
 
-## Support
+### Signed ingest
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+`X-Signature: t=<unix>,v1=<hex>` over the **raw** body, ±300s, constant-time
+comparison. Deliberately Stripe's shape, because it is the same problem. Each
+detail is load-bearing: middleware that parses JSON first has already changed
+the bytes; a timestamp outside the signed payload lets a captured request stay
+valid forever without the attacker needing the secret; and an early-returning
+comparison leaks through timing how much of a guess was right.
 
-## Stay in touch
+---
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Assumptions
 
-## License
+- Flight date is the **local departure date at the origin**, and goes to the
+  wire as `YYYY-MM-DD`. Prisma has no date-only type, so serialising the column
+  directly renders as the previous day for anyone west of UTC.
+- ICAO codes, not IATA. Only ICAO is unique.
+- Store as received, compare normalized. `nq-atc ` and `NQ-ATC` are one
+  aircraft; `TK 0234` and `TK234` are one flight.
+- A first observation is recorded in history but raises no alert. Learning a
+  tail code is enrichment, not a change.
+- An absent or null field means the provider said nothing, not that the value
+  was cleared. A provider that stops reporting a tail number has not changed it.
+- Ordering is by the provider's clock, never ours.
+- One alert per change, enforced by the database.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Known limitations
+
+- **SSE is at-most-once.** It carries a nudge, not the payload; clients refetch
+  on it and on reconnect, and a five-second poll keeps the screen correct if a
+  push is missed. Fan-out is in-process, so more than one replica needs Redis
+  pub/sub or sticky routing.
+- **Ordering uses strict `<`.** Provider clocks have second resolution, so two
+  snapshots in the same second can be applied in arrival order. Dropping a real
+  change is worse than applying a redundant one, so equal timestamps pass.
+- **No user authentication.** The brief defines no users, roles or tenancy, so
+  JWT and RBAC would be scope theatre. Request authentication exists where it is
+  real — the signed ingest boundary. In production the dashboard would sit
+  behind Entra ID and alerts would be scoped per operator at the repository
+  layer.
+- **No cache.** Flight state is the freshest read in the system; caching it
+  works against the product. The cacheable things are static reference data and
+  provider usage figures.
+- **Redis needs `noeviction`.** BullMQ requires it. Under memory pressure any
+  other policy drops job locks, which surfaces as spurious stalled jobs and
+  duplicate processing rather than as an obvious failure. Azure Cache defaults to
+  `volatile-lru` and disables `CONFIG`, so it has to be set at provisioning.
+- **Delayed job promotion needs a running worker**, so scaling the worker to
+  zero freezes the queue permanently.
+- **AeroAPI and Azure infrastructure-as-code are documented, not built.** See
+  above for AeroAPI. Untested Bicep would assert things nobody had run.
+
+## Next
+
+Transactional outbox at the first side effect that cannot self-heal — a lost
+SSE push is recovered by a refetch, a lost email is not. A reconciler sweep for
+flights whose queue entry vanished with Redis. Deployment to Azure Container
+Apps: one image, Key Vault and managed identity for secrets, OIDC federated
+credentials for CI.
+
+## Configuration
+
+See `.env.example`. Every value there is fake. Numeric variables validate as
+positive integers rather than plain coercion, because `z.coerce.number()` parses
+an empty string to `0` and reports success — and an empty string is exactly what
+an unedited `.env` or a blank platform secret produces. A timeout that silently
+becomes zero is worse than one that is missing.
