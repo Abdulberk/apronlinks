@@ -1,3 +1,7 @@
+// Must be first: module decorators read configuration at import time, so the
+// file has to be loaded before the module graph is. In production the real
+// environment is already set and this finds nothing to do.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import {
   FastifyAdapter,

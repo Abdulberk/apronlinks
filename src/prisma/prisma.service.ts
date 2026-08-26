@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/client';
-import { validateEnv } from '../config/env';
+import { env } from '../config/env';
 
 @Injectable()
 export class PrismaService
@@ -9,7 +9,7 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   constructor() {
-    const env = validateEnv(process.env);
+    const config = env();
 
     // Prisma 7 dropped the Rust query engine: the client now talks to Postgres
     // through a driver adapter, and the pool size lives here rather than in the
@@ -22,8 +22,8 @@ export class PrismaService
     // Postgres runs out of connections long before it runs out of capacity.
     super({
       adapter: new PrismaPg({
-        connectionString: env.DATABASE_URL,
-        max: env.DB_POOL_MAX,
+        connectionString: config.DATABASE_URL,
+        max: config.DB_POOL_MAX,
       }),
     });
   }

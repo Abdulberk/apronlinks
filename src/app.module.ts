@@ -7,6 +7,8 @@ import { IngestModule } from './ingest/ingest.module';
 import { FlightsModule } from './flights/flights.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ProvidersModule } from './providers/providers.module';
+import { PollingModule } from './polling/polling.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     FlightsModule,
     AlertsModule,
     DashboardModule,
+    ProvidersModule,
+    PollingModule,
   ],
 })
 export class AppModule {}

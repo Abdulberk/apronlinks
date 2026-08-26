@@ -12,7 +12,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
-import { validateEnv } from '../config/env';
+import { env } from '../config/env';
 import { IngestService, type IngestResult } from './ingest.service';
 import { verifySignature } from './signature';
 
@@ -32,7 +32,7 @@ const snapshotSchema = z.object({
 
 @Controller('ingest')
 export class IngestController {
-  private readonly secret = validateEnv(process.env).INGEST_HMAC_SECRET;
+  private readonly secret = env().INGEST_HMAC_SECRET;
 
   constructor(
     private readonly ingest: IngestService,

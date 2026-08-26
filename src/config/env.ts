@@ -79,3 +79,18 @@ export function validateEnv(raw: Record<string, unknown>): Env {
 
   return parsed.data;
 }
+
+let cached: Env | undefined;
+
+/**
+ * The validated environment, parsed once.
+ *
+ * Module decorators evaluate at import time, so anything reading configuration
+ * there runs before Nest has built anything. Parsing once and reusing it keeps
+ * that cheap and, more importantly, keeps every reader looking at the same
+ * values.
+ */
+export function env(): Env {
+  cached ??= validateEnv(process.env);
+  return cached;
+}
