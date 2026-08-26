@@ -1,0 +1,40 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# environment — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# test output
+coverage/
+.nyc_output/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors / OS
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# prisma local artifacts
+prisma/*.db
+prisma/*.db-journal
+
+# vendor API specifications — kept locally for reference.
+# Not redistributed: provider terms restrict republishing their specs.
+docs/api-specs/
+
+# captured provider fixtures containing live data
+fixtures/*.live.json
