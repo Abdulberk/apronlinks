@@ -38,3 +38,4 @@ docs/api-specs/
 
 # captured provider fixtures containing live data
 fixtures/*.live.json
+src/generated/

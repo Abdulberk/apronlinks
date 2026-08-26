@@ -1,3 +1,5 @@
+packages: []
+
 allowBuilds:
   '@prisma/engines': set this to true or false
   '@scarf/scarf': set this to true or false
@@ -5,11 +7,23 @@ allowBuilds:
   msgpackr-extract: set this to true or false
   prisma: set this to true or false
   unrs-resolver: set this to true or false
+
+# These packages ship postinstall scripts. pnpm does not run them unless they
+# are listed here, and by default it treats a skipped script as a fatal install
+# error — which fails the Docker build.
 onlyBuiltDependencies:
+  - prisma
   - '@prisma/client'
   - '@prisma/engines'
-  - prisma
   - esbuild
   - unrs-resolver
   - msgpackr-extract
   - '@scarf/scarf'
+
+# Skipped scripts are reported but do not fail the install. Verified that
+# nothing here needs them: Prisma 7 talks to Postgres through a driver adapter
+# rather than the downloaded Rust engine, and the remaining entries are
+# telemetry or optional native speedups with JavaScript fallbacks. The full
+# toolchain — prisma validate, migrate, seed, jest, nest build — was run
+# against a tree installed this way.
+strictDepBuilds: false

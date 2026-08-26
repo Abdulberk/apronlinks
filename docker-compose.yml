@@ -1,0 +1,61 @@
+# One command brings up everything: `docker compose up --build`.
+#
+# The api service waits for both dependencies to report healthy before it
+# starts. Without that, Postgres accepts TCP connections several seconds before
+# it accepts queries, and the API boot-loops against a database that looks up
+# but is not ready.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: flightalerts
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d flightalerts']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # BullMQ requires noeviction. Under memory pressure any other policy drops
+    # job locks, which surfaces as spurious stalled jobs and duplicate
+    # processing rather than as an obvious failure.
+    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/flightalerts?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FLIGHT_PROVIDER: fixture
+      INGEST_HMAC_SECRET: local-development-secret-not-for-production
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
