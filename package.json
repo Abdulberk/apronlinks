@@ -29,9 +29,13 @@
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/terminus": "^11.1.1",
     "@nestjs/throttler": "^6.5.0",
+    "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bullmq": "^6.2.1",
-    "fastify": "^5.12.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "fastify": "^5.11.3",
+    "ioredis": "^6.0.0",
     "nestjs-pino": "^4.6.1",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
@@ -77,19 +81,19 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "domain/**/*.ts",
+      "!domain/**/*.spec.ts"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/client",
-      "@prisma/engines",
-      "prisma",
-      "esbuild",
-      "unrs-resolver"
-    ]
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "./src/domain/": {
+        "lines": 100,
+        "functions": 100,
+        "statements": 100,
+        "branches": 95
+      }
+    }
   },
   "engines": {
     "node": ">=22"
