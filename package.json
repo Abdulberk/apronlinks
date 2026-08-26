@@ -2,6 +2,10 @@
   "name": "flight-change-alerts-api",
   "version": "0.1.0",
   "description": "Flight change alert service — detects flight number and aircraft registration changes and raises operational alerts.",
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=22"
+  },
   "author": "",
   "private": true,
   "license": "UNLICENSED",
@@ -105,8 +109,5 @@
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     }
-  },
-  "engines": {
-    "node": ">=22"
   }
 }
