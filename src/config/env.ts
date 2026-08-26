@@ -16,9 +16,13 @@ import { z } from 'zod';
  *    first request that happens to touch the bad value.
  */
 export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z
+    .enum(['development', 'test', 'production'])
+    .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+    .default('info'),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   DB_POOL_MAX: z.coerce.number().int().positive().max(20).default(5),
@@ -35,16 +39,28 @@ export const envSchema = z.object({
    * We take the conservative value: exceeding the real cap returns a billable
    * 4xx that cannot be retried into success.
    */
-  FR24_MAX_IDS_PER_QUERY: z.coerce.number().int().positive().max(15).default(10),
+  FR24_MAX_IDS_PER_QUERY: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(15)
+    .default(10),
 
   /**
    * Kept below the platform's shutdown grace period. A provider call that
    * outlives SIGTERM eats the whole window the queue needs to drain.
    */
-  PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().max(15_000).default(8_000),
+  PROVIDER_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(15_000)
+    .default(8_000),
 
   /** Shared secret for the signed ingest endpoint. Never a real value in git. */
-  INGEST_HMAC_SECRET: z.string().min(16, 'INGEST_HMAC_SECRET must be at least 16 characters'),
+  INGEST_HMAC_SECRET: z
+    .string()
+    .min(16, 'INGEST_HMAC_SECRET must be at least 16 characters'),
 
   /** Comma separated. Only needed by a separately hosted frontend. */
   CORS_ORIGINS: z.string().default(''),
@@ -56,7 +72,9 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
 
   if (!parsed.success) {
-    throw new Error(`Invalid environment configuration\n${z.prettifyError(parsed.error)}`);
+    throw new Error(
+      `Invalid environment configuration\n${z.prettifyError(parsed.error)}`,
+    );
   }
 
   return parsed.data;
