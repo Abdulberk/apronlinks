@@ -22,9 +22,11 @@ describe('DashboardController', () => {
     const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
     expect(script).toBeDefined();
 
-    // new Function parses without executing. A syntax error throws here, which
-    // is exactly the failure that shipped unnoticed.
-    expect(() => new Function(script!)).not.toThrow();
+    // Parsed, not executed. A syntax error throws here, which is exactly the
+    // failure that shipped unnoticed.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const parse = (): unknown => new Function(script!);
+    expect(parse).not.toThrow();
   });
 
   it('leaves no escaping backslash attached to a template literal', () => {

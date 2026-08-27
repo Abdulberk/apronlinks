@@ -1,4 +1,5 @@
 import type { Alert, Flight, FlightChange } from '../generated/prisma/client';
+import { nextPollDelay } from '../domain';
 
 /**
  * Prisma has no date-only type, so a `@db.Date` column comes back as an instant
@@ -18,6 +19,7 @@ export function staleness(
   lastSyncedAt: Date,
   now: Date,
   trackingActive = true,
+  expectedIntervalMs: number | null = null,
 ): {
   seconds: number;
   label: 'LIVE' | 'STALE' | 'NO CONNECTION' | 'TRACKING ENDED';
@@ -30,8 +32,17 @@ export function staleness(
   // on the flight where it is real.
   if (!trackingActive) return { seconds, label: 'TRACKING ENDED' };
 
-  if (seconds < 120) return { seconds, label: 'LIVE' };
-  if (seconds < 900) return { seconds, label: 'STALE' };
+  // Late relative to how often we said we would look, not to a fixed clock.
+  //
+  // The cadence is tiered on purpose: a flight two days out is checked every
+  // six hours. Judged against a flat fifteen-minute threshold, every one of
+  // those would sit permanently on NO CONNECTION while the system worked
+  // exactly as designed — and a dashboard that is permanently red is a
+  // dashboard nobody reads.
+  const expected = (expectedIntervalMs ?? 60_000) / 1000;
+
+  if (seconds < expected * 2) return { seconds, label: 'LIVE' };
+  if (seconds < expected * 6) return { seconds, label: 'STALE' };
   return { seconds, label: 'NO CONNECTION' };
 }
 
@@ -54,7 +65,21 @@ export function serializeFlight(flight: Flight, now = new Date()) {
     revision: flight.revision,
     trackingActive: flight.trackingActive,
     lastSyncedAt: flight.lastSyncedAt.toISOString(),
-    freshness: staleness(flight.lastSyncedAt, now, flight.trackingActive),
+    // Derived from the same function the poller uses, so the badge and the
+    // schedule can never disagree about what 'on time' means for this flight.
+    freshness: staleness(
+      flight.lastSyncedAt,
+      now,
+      flight.trackingActive,
+      nextPollDelay(
+        {
+          status: flight.status,
+          scheduledDeparture: flight.scheduledDeparture,
+          arrivedAt: flight.arrivedAt,
+        },
+        now,
+      ),
+    ),
   };
 }
 

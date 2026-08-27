@@ -185,7 +185,7 @@ async function loadFlights() {
       : f.freshness.label === 'STALE' ? 'STALE' : 'NO';
     return \`
       <tr>
-        <td class="mono id">\${esc(f.id.slice(0, 8))}</td>
+        <td class="mono id">\${esc(f.id.slice(-8))}</td>
         <td><a class="flt" data-flight="\${f.id}">\${esc(f.flightNumber)}</a></td>
         <td class="mono">\${esc(f.aircraftRegistration ?? '—')}</td>
         <td class="mono">\${esc(f.flightDate)}</td>
