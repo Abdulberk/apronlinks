@@ -169,3 +169,37 @@ describe('detectChanges — formatting must never raise a false alert', () => {
     ).toEqual([]);
   });
 });
+
+describe('detectChanges — the unknown-flight-number sentinel', () => {
+  it('does not alert when a placeholder is replaced by a real number', () => {
+    // A flight can arrive without a number, and the column is NOT NULL, so a
+    // sentinel gets written. Comparing it as a value produces
+    // "Flight number changed from UNKNOWN to ALX314" — a meaningless alert on
+    // a dashboard whose whole point is that alerts mean something.
+    const changes = detectChanges(
+      state({ flightNumber: 'UNKNOWN' }),
+      snap({ flightNumber: 'ALX314' }),
+    );
+
+    expect(changes).toEqual([
+      {
+        field: 'FLIGHT_NUMBER',
+        oldValue: null,
+        newValue: 'ALX314',
+        alertable: false,
+      },
+    ]);
+  });
+
+  it('still records the enrichment in history', () => {
+    // Recorded but not alertable: the history should show where the value came
+    // from, without paging anyone about it.
+    const changes = detectChanges(
+      state({ flightNumber: 'UNKNOWN' }),
+      snap({ flightNumber: 'ALX314' }),
+    );
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.oldValue).toBeNull();
+  });
+});

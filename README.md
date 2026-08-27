@@ -183,10 +183,15 @@ would have turned verified research into a plausible guess.
 ## Testing
 
 ```bash
-pnpm test                             # 98 unit tests, no Docker required
+pnpm test                             # 100 unit tests, no Docker required
+
 docker compose up -d postgres redis
-pnpm test:e2e                         # 11 integration tests, real Postgres
+pnpm exec prisma migrate deploy       # once, to create the tables
+pnpm test:e2e                         # 12 integration tests, real Postgres
 ```
+
+`pnpm install` generates the Prisma client, so the unit tests run on a fresh
+clone with nothing else set up.
 
 Unit tests cover `src/domain` at 100% of lines, branches and functions. The
 threshold is enforced, not aspirational.

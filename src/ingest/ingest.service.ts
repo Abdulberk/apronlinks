@@ -2,13 +2,32 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AlertStream } from '../alerts/alert-stream';
-import { detectChanges, formatAlert } from '../domain';
+import { UNKNOWN_FLIGHT_NUMBER, detectChanges, formatAlert } from '../domain';
 import type { FlightSnapshot } from '../domain';
-import type { IngestOutcome, Prisma } from '../generated/prisma/client';
+import type {
+  IngestOutcome,
+  Prisma,
+  Provider,
+} from '../generated/prisma/client';
 import { ConcurrencyError, isUniqueViolation } from './errors';
+import { env } from '../config/env';
 
-/** How many times a lost race is worth re-reading and retrying. */
-const MAX_ATTEMPTS = 4;
+/**
+ * How many times a lost race is worth re-reading and retrying.
+ *
+ * This has to exceed the expected contention depth, not be a round number. N
+ * writers on one row serialize on Postgres's row lock, so in the worst
+ * interleaving exactly one wins per round and the unluckiest needs N rounds. A
+ * budget of 4 against the 5-writer case in the test suite is a latent flake:
+ * it passes on an idle machine and fails on a loaded CI runner.
+ */
+const MAX_ATTEMPTS = 12;
+
+/**
+ * Without a ceiling, 20 * 2^11 is about 41 seconds — longer than the test
+ * timeout, which would trade a contention flake for a timeout flake.
+ */
+const BACKOFF_CEILING_MS = 250;
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +66,14 @@ export interface IngestResult {
 export class IngestService {
   private readonly logger = new Logger(IngestService.name);
 
+  /**
+   * Which provider issued the ids we are correlating on. Hard-coding FIXTURE
+   * here would make the composite key separate nothing, and switching provider
+   * would silently create a second row for a flight we already track.
+   */
+  private readonly source: Provider =
+    env().FLIGHT_PROVIDER === 'fr24' ? 'FR24' : 'FIXTURE';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly alerts: AlertStream,
@@ -75,7 +102,9 @@ export class IngestService {
 
         if (!lostARace || attempt >= MAX_ATTEMPTS - 1) throw error;
 
-        await sleep(20 * 2 ** attempt + Math.random() * 20);
+        await sleep(
+          Math.min(20 * 2 ** attempt, BACKOFF_CEILING_MS) + Math.random() * 20,
+        );
       }
     }
   }
@@ -115,7 +144,7 @@ export class IngestService {
       const flight = await tx.flight.findUnique({
         where: {
           providerSource_providerFlightId: {
-            providerSource: 'FIXTURE',
+            providerSource: this.source,
             providerFlightId: snapshot.providerFlightId,
           },
         },
@@ -143,8 +172,20 @@ export class IngestService {
       const changes = detectChanges(flight, snapshot);
 
       if (changes.length === 0) {
-        await tx.flight.update({
-          where: { id: flight.id },
+        // Guarded on sourceTimestamp rather than on revision. This branch does
+        // not bump the revision, so a revision guard would let two concurrent
+        // no-change writers rewind each other — and an unguarded update is
+        // worse still: a writer that read at an older timestamp waits on the
+        // row lock, sees its `id` predicate still match after a real change
+        // commits, and overwrites the watermark with its own stale value. The
+        // corruption lands in the exact column the ordering check above relies
+        // on, so the next genuinely stale snapshot is then applied as fresh and
+        // raises an alert for a change that never happened.
+        await tx.flight.updateMany({
+          where: {
+            id: flight.id,
+            sourceTimestamp: { lte: snapshot.sourceTimestamp },
+          },
           data: {
             sourceTimestamp: snapshot.sourceTimestamp,
             lastSyncedAt: new Date(),
@@ -250,9 +291,9 @@ export class IngestService {
     // is not a change to it, and nobody should be paged for it.
     const created = await tx.flight.create({
       data: {
-        providerSource: 'FIXTURE',
+        providerSource: this.source,
         providerFlightId: snapshot.providerFlightId,
-        flightNumber: snapshot.flightNumber ?? 'UNKNOWN',
+        flightNumber: snapshot.flightNumber ?? UNKNOWN_FLIGHT_NUMBER,
         aircraftRegistration: snapshot.aircraftRegistration ?? null,
         flightDate: new Date(
           snapshot.sourceTimestamp.toISOString().slice(0, 10),

@@ -11,6 +11,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import helmet from '@fastify/helmet';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { validateEnv } from './config/env';
 
 async function bootstrap(): Promise<void> {
@@ -34,6 +35,7 @@ async function bootstrap(): Promise<void> {
     contentSecurityPolicy: false,
   });
 
+  app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   if (env.CORS_ORIGINS) {

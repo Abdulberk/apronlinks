@@ -336,3 +336,78 @@ describe('IngestService (real Postgres)', () => {
     expect(await prisma.flightChange.count({ where: { flightId } })).toBe(1);
   });
 });
+
+describe('IngestService — watermark integrity (real Postgres)', () => {
+  let prisma: PrismaService;
+  let ingest: IngestService;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, IngestModule],
+    }).compile();
+
+    await moduleRef.init();
+    prisma = moduleRef.get(PrismaService);
+    ingest = moduleRef.get(IngestService);
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  beforeEach(async () => {
+    await prisma.flight.deleteMany({
+      where: { providerFlightId: { startsWith: 'wm-' } },
+    });
+  });
+
+  const wm = (over: Partial<FlightSnapshot> = {}): FlightSnapshot => ({
+    providerFlightId: 'wm-alx314',
+    sourceTimestamp: new Date('2026-08-26T10:00:00Z'),
+    ...over,
+  });
+
+  it('never lets a no-change snapshot rewind the ordering watermark', async () => {
+    // This has to be concurrent to mean anything. Run sequentially, the late
+    // snapshot is caught by the ordering guard at the top of process() and
+    // never reaches the no-change branch at all — so a sequential version of
+    // this test passes even with the guard removed, which makes it worthless.
+    //
+    // Concurrently, both writers read at the same old watermark, both pass the
+    // ordering guard, and the no-change writer commits second. Unguarded, its
+    // update still matches on id and writes its own older timestamp back over
+    // the one the real change just set, corrupting the column the staleness
+    // check depends on.
+    for (let round = 0; round < 8; round++) {
+      await prisma.flight.deleteMany({
+        where: { providerFlightId: { startsWith: 'wm-' } },
+      });
+
+      const created = await ingest.process(
+        wm({ flightNumber: 'ALX314', aircraftRegistration: 'NQ-ATC' }),
+      );
+      const flightId = created.flightId!;
+
+      await Promise.all([
+        ingest.process(
+          wm({
+            aircraftRegistration: 'NQ-BRD',
+            sourceTimestamp: new Date('2026-08-26T10:05:00Z'),
+          }),
+        ),
+        ingest.process(
+          wm({ sourceTimestamp: new Date('2026-08-26T10:01:00Z') }),
+        ),
+      ]);
+
+      const flight = await prisma.flight.findUniqueOrThrow({
+        where: { id: flightId },
+      });
+
+      // The watermark may only ever move forward.
+      expect(flight.sourceTimestamp.toISOString()).toBe(
+        '2026-08-26T10:05:00.000Z',
+      );
+    }
+  });
+});

@@ -49,3 +49,13 @@ export function blankToNull(
   if (value === null) return null;
   return value.trim() === '' ? null : value;
 }
+
+/**
+ * Written when a provider gives us a flight without a number. The column is NOT
+ * NULL because a flight without any identifier is not useful, but the value is
+ * an admission of absence rather than a value — so change detection has to
+ * treat it as absent, or the first snapshot that fills it in raises
+ * "Flight number changed from UNKNOWN to ALX314", which is precisely the kind
+ * of meaningless alert this file exists to prevent.
+ */
+export const UNKNOWN_FLIGHT_NUMBER = 'UNKNOWN';

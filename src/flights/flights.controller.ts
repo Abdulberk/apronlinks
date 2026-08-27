@@ -3,6 +3,7 @@ import {
   Get,
   NotFoundException,
   Param,
+  ParseUUIDPipe,
   Query,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,7 +15,9 @@ export class FlightsController {
 
   @Get()
   async list(@Query('limit') limit?: string) {
-    const take = Math.min(Number(limit) || 50, 200);
+    // Clamped at both ends. A negative take is not a validation error to Prisma —
+    // it reverses the ordering and silently returns the last page instead.
+    const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
     const now = new Date();
 
     const flights = await this.prisma.flight.findMany({
@@ -32,7 +35,7 @@ export class FlightsController {
    * rather than overwritten.
    */
   @Get(':id/changes')
-  async changes(@Param('id') id: string) {
+  async changes(@Param('id', ParseUUIDPipe) id: string) {
     const flight = await this.prisma.flight.findUnique({ where: { id } });
     if (flight === null) throw new NotFoundException(`no flight ${id}`);
 

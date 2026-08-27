@@ -5,7 +5,9 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts: the root postinstall runs prisma generate, and this stage
+# has no schema yet. The build stage generates the client explicitly.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM node:22-alpine AS build
 WORKDIR /app

@@ -3,6 +3,7 @@ import { Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { IngestService } from '../ingest/ingest.service';
 import { nextPollDelay } from '../domain';
+import { env } from '../config/env';
 import {
   FLIGHT_DATA_PROVIDER,
   UnrecoverableProviderError,
@@ -33,6 +34,10 @@ const SWEEP_LIMIT = 200;
 export class PollingProcessor extends WorkerHost {
   private readonly logger = new Logger(PollingProcessor.name);
 
+  /** Only poll flights this provider issued ids for. */
+  private readonly source =
+    env().FLIGHT_PROVIDER === 'fr24' ? 'FR24' : 'FIXTURE';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ingest: IngestService,
@@ -47,6 +52,7 @@ export class PollingProcessor extends WorkerHost {
 
     const due = await this.prisma.flight.findMany({
       where: {
+        providerSource: this.source,
         trackingActive: true,
         OR: [{ nextPollAt: null }, { nextPollAt: { lte: now } }],
       },
@@ -59,29 +65,39 @@ export class PollingProcessor extends WorkerHost {
     let applied = 0;
 
     for (const batch of chunk(due, this.provider.maxIdsPerQuery)) {
-      const ids = batch.map((f) => f.providerFlightId);
-
-      let snapshots;
+      // The whole batch is isolated, not just the fetch. Anything thrown by
+      // ingest — a transaction timeout, a value too long for its column, a
+      // retry budget exhausted under contention — would otherwise unwind the
+      // loop and leave every remaining batch unscheduled, with no cursor moved
+      // and nothing in the log. One bad batch should cost that batch.
       try {
-        snapshots = await this.provider.fetchSnapshots(ids);
-      } catch (error) {
-        if (error instanceof UnrecoverableProviderError) {
-          // Asking again will fail the same way and be billed again, so record
-          // it against the flights and move on rather than retrying into it.
-          this.logger.error(`provider refused the batch: ${error.message}`);
-          await this.markAttempted(
-            batch.map((f) => f.id),
-            now,
-            error.message,
-          );
-          continue;
-        }
-        throw error;
-      }
+        const snapshots = await this.provider.fetchSnapshots(
+          batch.map((f) => f.providerFlightId),
+        );
 
-      for (const snapshot of snapshots) {
-        const result = await this.ingest.process(snapshot);
-        if (result.outcome === 'APPLIED') applied += 1;
+        for (const snapshot of snapshots) {
+          const result = await this.ingest.process(snapshot);
+          if (result.outcome === 'APPLIED') applied += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        // A permanent provider refusal and an unexpected fault are both handled
+        // the same way here: record it and move the cursor. Retrying a billable
+        // 4xx buys nothing, and retrying an unknown fault at sweep level would
+        // block every flight behind it.
+        this.logger.error(
+          error instanceof UnrecoverableProviderError
+            ? `provider refused a batch of ${batch.length}: ${message}`
+            : `batch of ${batch.length} failed: ${message}`,
+        );
+
+        await this.markAttempted(
+          batch.map((f) => f.id),
+          now,
+          message,
+        );
+        continue;
       }
 
       await this.scheduleNext(batch, now);

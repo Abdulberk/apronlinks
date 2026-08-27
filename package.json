@@ -25,7 +25,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "demo:change": "tsx scripts/demo-change.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@fastify/helmet": "^13.1.1",

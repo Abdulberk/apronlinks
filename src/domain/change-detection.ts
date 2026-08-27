@@ -1,4 +1,5 @@
 import {
+  UNKNOWN_FLIGHT_NUMBER,
   blankToNull,
   normalizeFlightNumber,
   normalizeRegistration,
@@ -53,7 +54,10 @@ export function detectChanges(
     // The provider said "unknown". Do not erase what we already learned.
     if (next === null) continue;
 
-    const previous = blankToNull(current[field.key]) ?? null;
+    const stored = blankToNull(current[field.key]) ?? null;
+    // The sentinel means we never learned the value, so it must not compare as
+    // one. Otherwise enrichment reads as a change and alerts on itself.
+    const previous = stored === UNKNOWN_FLIGHT_NUMBER ? null : stored;
 
     // The same value wearing different formatting is not a change.
     if (

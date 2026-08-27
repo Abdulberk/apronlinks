@@ -47,7 +47,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       FLIGHT_PROVIDER: fixture
-      INGEST_HMAC_SECRET: local-development-secret-not-for-production
+      INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-local-development-secret-not-for-production}
     ports:
       - '3000:3000'
     depends_on:

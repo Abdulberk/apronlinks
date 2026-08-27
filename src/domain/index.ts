@@ -3,6 +3,7 @@ export {
   normalizeFlightNumber,
   normalizeRegistration,
   blankToNull,
+  UNKNOWN_FLIGHT_NUMBER,
 } from './normalize';
 export { detectChanges } from './change-detection';
 export {

@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Post, Query, Sse } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Sse,
+} from '@nestjs/common';
 import { Observable, interval, map, merge } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeAlert } from '../flights/serializers';
@@ -30,12 +39,19 @@ export class AlertsController {
     return { unread, alerts: alerts.map(serializeAlert) };
   }
 
+  // ParseUUIDPipe rather than letting Prisma reject it: Postgres answers a
+  // malformed uuid with 22P02, which surfaces as a 500 for what is plainly a
+  // bad request. A stale dashboard tab acknowledging an alert after a re-seed
+  // hits exactly this.
   @Post(':id/ack')
-  async acknowledge(@Param('id') id: string) {
-    const alert = await this.prisma.alert.update({
-      where: { id },
+  async acknowledge(@Param('id', ParseUUIDPipe) id: string) {
+    await this.prisma.alert.updateMany({
+      where: { id, status: 'UNREAD' },
       data: { status: 'ACKNOWLEDGED', acknowledgedAt: new Date() },
     });
+
+    const alert = await this.prisma.alert.findUnique({ where: { id } });
+    if (alert === null) throw new NotFoundException(`no alert ${id}`);
 
     return serializeAlert(alert);
   }
