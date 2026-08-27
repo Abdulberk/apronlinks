@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+
+/*
+ * An operations screen, not a marketing page.
+ *
+ * The palette is built for a room where someone is watching this for hours: a
+ * near-black ground with a blue bias, desaturated surfaces, and saturation
+ * spent only on the things that need a decision. Aviation systems are
+ * monospace end to end — flight numbers, tail codes, ICAO identifiers and times
+ * are all fixed-width in every real one — so the typeface does the theming
+ * rather than any decoration.
+ */
+@theme {
+  --color-ground: #080b10;
+  --color-surface: #0e1319;
+  --color-raised: #141b23;
+  --color-line: #1e2731;
+  --color-line-soft: #161d25;
+
+  --color-ink: #e8eef4;
+  --color-ink-dim: #8fa0b0;
+  --color-ink-faint: #5b6b7a;
+
+  /* Radar sweep. Used for anything the operator can act on. */
+  --color-signal: #46b8f5;
+  --color-signal-dim: #1d5a7a;
+
+  /* An aircraft change is routine, not an emergency. Warm, not red. */
+  --color-alert: #ff7a92;
+  --color-alert-dim: #6b2634;
+
+  --color-ok: #43c17f;
+  --color-warn: #e0a44a;
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Digits that sit in columns have to line up, everywhere. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /*
+   * A departure board flips a row when it changes. This is the restrained
+   * version: a new alert lifts in once and then stops moving, so the eye is
+   * drawn to it without the screen becoming busy.
+   */
+  @keyframes board-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .board-in {
+    animation: board-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  }
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 2.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .board-in,
+    .pulse-dot {
+      animation: none;
+    }
+  }
+}

@@ -18,6 +18,9 @@ import type { FlightSnapshot } from '../src/domain';
 
 const PROVIDER_FLIGHT_ID = 'e2e-alx314';
 
+/** Everything these tests create, removed both before and after the run. */
+const SCRATCH_IDS = ['e2e-alx314', 'wm-alx314'];
+
 const snapshot = (over: Partial<FlightSnapshot> = {}): FlightSnapshot => ({
   providerFlightId: PROVIDER_FLIGHT_ID,
   sourceTimestamp: new Date('2026-08-26T10:00:00Z'),
@@ -39,6 +42,16 @@ describe('IngestService (real Postgres)', () => {
   });
 
   afterAll(async () => {
+    // Clean up on the way out as well as on the way in. Rows left behind show
+    // up on the dashboard as flights with no route and no schedule, so a
+    // reviewer who runs the suite and then opens the page finds test debris
+    // sitting among the real data.
+    await prisma.flight.deleteMany({
+      where: { providerFlightId: { in: SCRATCH_IDS } },
+    });
+    await prisma.ingestEvent.deleteMany({
+      where: { providerFlightId: { in: SCRATCH_IDS } },
+    });
     await prisma.$disconnect();
   });
 
@@ -352,6 +365,16 @@ describe('IngestService — watermark integrity (real Postgres)', () => {
   });
 
   afterAll(async () => {
+    // Clean up on the way out as well as on the way in. Rows left behind show
+    // up on the dashboard as flights with no route and no schedule, so a
+    // reviewer who runs the suite and then opens the page finds test debris
+    // sitting among the real data.
+    await prisma.flight.deleteMany({
+      where: { providerFlightId: { in: SCRATCH_IDS } },
+    });
+    await prisma.ingestEvent.deleteMany({
+      where: { providerFlightId: { in: SCRATCH_IDS } },
+    });
     await prisma.$disconnect();
   });
 

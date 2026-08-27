@@ -26,7 +26,9 @@
     "db:seed": "prisma db seed",
     "demo:change": "tsx scripts/demo-change.ts",
     "typecheck": "tsc --noEmit",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build"
   },
   "dependencies": {
     "@fastify/helmet": "^13.1.1",

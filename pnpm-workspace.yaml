@@ -1,4 +1,5 @@
-packages: []
+packages:
+  - web
 
 allowBuilds:
   '@prisma/engines': set this to true or false
@@ -19,11 +20,10 @@ onlyBuiltDependencies:
   - unrs-resolver
   - msgpackr-extract
   - '@scarf/scarf'
+  - sharp
 
 # Skipped scripts are reported but do not fail the install. Verified that
 # nothing here needs them: Prisma 7 talks to Postgres through a driver adapter
 # rather than the downloaded Rust engine, and the remaining entries are
-# telemetry or optional native speedups with JavaScript fallbacks. The full
-# toolchain — prisma validate, migrate, seed, jest, nest build — was run
-# against a tree installed this way.
+# telemetry or optional native speedups with JavaScript fallbacks.
 strictDepBuilds: false
