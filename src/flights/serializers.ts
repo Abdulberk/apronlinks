@@ -17,11 +17,19 @@ export function toDateString(value: Date): string {
 export function staleness(
   lastSyncedAt: Date,
   now: Date,
+  trackingActive = true,
 ): {
   seconds: number;
-  label: 'LIVE' | 'STALE' | 'NO CONNECTION';
+  label: 'LIVE' | 'STALE' | 'NO CONNECTION' | 'TRACKING ENDED';
 } {
   const seconds = Math.max(0, Math.round((+now - +lastSyncedAt) / 1000));
+
+  // A flight we deliberately stopped following is not a flight we have lost
+  // contact with. Reporting it as NO CONNECTION describes a failure that did
+  // not happen, and an operator who learns to ignore that label will ignore it
+  // on the flight where it is real.
+  if (!trackingActive) return { seconds, label: 'TRACKING ENDED' };
+
   if (seconds < 120) return { seconds, label: 'LIVE' };
   if (seconds < 900) return { seconds, label: 'STALE' };
   return { seconds, label: 'NO CONNECTION' };
@@ -44,8 +52,9 @@ export function serializeFlight(flight: Flight, now = new Date()) {
     scheduledDeparture: flight.scheduledDeparture?.toISOString() ?? null,
     status: flight.status,
     revision: flight.revision,
+    trackingActive: flight.trackingActive,
     lastSyncedAt: flight.lastSyncedAt.toISOString(),
-    freshness: staleness(flight.lastSyncedAt, now),
+    freshness: staleness(flight.lastSyncedAt, now, flight.trackingActive),
   };
 }
 

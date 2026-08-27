@@ -23,7 +23,13 @@ export class DashboardController {
   }
 }
 
-const PAGE = String.raw`<!doctype html>
+// A normal template literal, NOT String.raw. The page contains the browser's
+// own template literals, so the backticks and ${} inside it are escaped here to
+// survive into the output. String.raw leaves the escaping backslashes attached,
+// which makes the emitted script a syntax error and the whole page inert — it
+// still serves 200 with the right byte count, so only opening it reveals that
+// nothing runs.
+const PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -175,7 +181,8 @@ async function loadFlights() {
   const { flights } = await res.json();
 
   $('flights').innerHTML = flights.map((f) => {
-    const cls = f.freshness.label === 'NO CONNECTION' ? 'NO' : f.freshness.label;
+    const cls = f.freshness.label === 'LIVE' ? 'LIVE'
+      : f.freshness.label === 'STALE' ? 'STALE' : 'NO';
     return \`
       <tr>
         <td class="mono id">\${esc(f.id.slice(0, 8))}</td>

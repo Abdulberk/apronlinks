@@ -1,4 +1,5 @@
 import {
+  HttpCode,
   BadRequestException,
   Body,
   Controller,
@@ -48,6 +49,12 @@ export class IngestController {
    * signed body twice and the second answers DUPLICATE while the change count
    * stays where it was.
    */
+  // 200, not the framework's default 201. A webhook-shaped endpoint answers
+  // "I have taken responsibility for this delivery" — whether that meant
+  // applying a change, recognising a replay or finding nothing new is business
+  // detail, and it is in the body. Answering Created to a duplicate would say
+  // something was created when nothing was.
+  @HttpCode(200)
   @Post('flight-snapshot')
   async ingestSnapshot(
     @Req() request: RawBodyRequest<FastifyRequest>,
@@ -89,6 +96,7 @@ export class IngestController {
    * is not currently showing, so pressing it repeatedly produces the flip-flop
    * the history view is there to show.
    */
+  @HttpCode(200)
   @Post('demo/tail-swap')
   async demoTailSwap(@Body() body: unknown): Promise<IngestResult> {
     const target = z
