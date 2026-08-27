@@ -21,9 +21,14 @@ export const UNSCHEDULED_WATCH = 15 * MINUTE;
  *
  * Cadence tracks operational urgency, not the clock. Nobody cares about a tail
  * swap on a flight leaving in twenty hours; a tail swap twenty minutes before
- * departure means a ground crew has to move equipment now. Against a fixed
- * one-minute cadence this is roughly 87% fewer polls per flight per day, and
- * it is fresher in the window where freshness actually matters.
+ * departure means a ground crew has to move equipment now.
+ *
+ * Following one flight from two days out through landing costs about 200 polls
+ * rather than the ~3,000 a flat one-minute cadence would, and it is no less
+ * current in the window that matters — the whole saving comes out of the hours
+ * when nothing is happening. That is counted from this function in
+ * `poll-budget.spec.ts` rather than asserted here, so the figure cannot drift
+ * away from the tiers it describes.
  *
  * Returns milliseconds until the next poll, or null to stop tracking.
  *
