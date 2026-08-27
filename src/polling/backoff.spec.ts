@@ -26,9 +26,9 @@ describe('backoffFor', () => {
   it.each([401, 403, 404, 422])(
     'treats %i the same as any other permanent refusal',
     (status) => {
-      expect(backoffFor(new UnrecoverableProviderError(status, 'refused'))).toBe(
-        UNRECOVERABLE_BACKOFF_MS,
-      );
+      expect(
+        backoffFor(new UnrecoverableProviderError(status, 'refused')),
+      ).toBe(UNRECOVERABLE_BACKOFF_MS);
     },
   );
 
