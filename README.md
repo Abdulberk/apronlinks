@@ -13,6 +13,18 @@ docker compose up --build
 Then open **http://localhost:3000**. The stack seeds itself, so there are
 flights and a tail change to trigger the moment it comes up.
 
+That page is the service's own built-in dashboard — one file, no build step —
+so this repository is self-sufficient from a single command. The operator UI is
+a separate Next.js client, run alongside it:
+
+```bash
+pnpm install
+pnpm dev:web        # http://localhost:3001
+```
+
+It is deliberately outside the compose stack. A Next build takes minutes, and
+`docker compose up --build` earns its place by being quick.
+
 ---
 
 ## Seeing it work
@@ -101,7 +113,12 @@ src/
   polling/     BullMQ sweep, cadence from the domain function
   alerts/      REST + SSE
   flights/     REST + change history
-  dashboard/   One self-contained page
+  dashboard/   One self-contained page, no build step
+
+web/           The operator UI. Next.js 16, React 19, Tailwind 4.
+  app/         Flight board and per-flight change history
+  components/  The shared vocabulary: tags, panels, value transitions
+  hooks/       Live stream plus a slow poll underneath it
 ```
 
 `src/domain` is the only layer with no framework coupling, and that is why
@@ -130,6 +147,33 @@ chain is the tempting shape and its failure mode only appears in production: a
 job that exhausts its retries never books a successor, so that flight silently
 stops being polled forever and the only symptom is a `lastSyncedAt` quietly
 getting older. No error, no dead letter, nothing to page on.
+
+---
+
+## The operator UI
+
+`web/` is a real client rather than a demo page, and three decisions in it are
+worth stating because none of them are decoration.
+
+**Every identifier is monospace.** Flight numbers, tail codes, ICAO airports and
+times are fixed-width in every real aviation system, because that is what makes
+a dense board scannable at a glance. The typeface carries the theme; there is no
+ornament.
+
+**An aircraft change is coloured warm, not red.** It is a routine event that
+someone has to act on, not an emergency. Spend red on the routine case and there
+is nothing left to say when something is genuinely wrong.
+
+**Times render in UTC with the Z shown.** Aviation standardised on UTC precisely
+so that nobody has to work out whose local time a number is in. Converting to
+the viewer's zone would put that ambiguity straight back.
+
+State is encoded in shape as well as colour — a border, a dot, a weight — so the
+board still reads for anyone who cannot separate the hues.
+
+The client talks to the service across origins with CORS, which is the shape it
+would have in production anyway: the API and the operator UI are separately
+deployed. `CORS_ORIGINS` controls who may connect.
 
 ---
 
@@ -213,6 +257,14 @@ Two of them are worth reading:
 
 The change-detection tests earn their keep. Restoring the naive
 `[A-Z0-9]{2,3}` in the flight-number regex turns 11 of them red.
+
+The built-in dashboard is a string, so nothing type-checks it and nothing lints
+it. That gap is real: the page once shipped with `String.raw`, which leaves the
+escaping backslashes attached to the browser's own template literals and made
+the emitted script a syntax error. `GET /` still answered 200 with a plausible
+byte count, so every check short of opening it in a browser passed while the page
+did nothing at all. Five tests now parse the emitted script rather than trusting
+the status code.
 
 ---
 

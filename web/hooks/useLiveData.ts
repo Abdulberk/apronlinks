@@ -45,6 +45,9 @@ export function useLiveData(pollMs = 5000) {
   }, []);
 
   useEffect(() => {
+    // refresh() is async, so this effect's body sets no state — the rule cannot
+    // see past the await. Fetching once on mount is the point of subscribing.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
 
     const stream = new EventSource(`${API}/alerts/stream`);

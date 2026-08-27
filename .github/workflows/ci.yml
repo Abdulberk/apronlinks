@@ -62,6 +62,13 @@ jobs:
       - run: pnpm exec prisma validate
       - run: pnpm exec tsc --noEmit
       - run: pnpm lint
+
+      # The frontend is part of this repository, so it is part of the gate.
+      # Without this a client that does not compile can be pushed unnoticed —
+      # nothing else in CI would ever load it.
+      - run: pnpm --filter web exec tsc --noEmit
+      - run: pnpm --filter web exec eslint . --max-warnings 0
+      - run: pnpm --filter web build
       - name: Scan history for secrets
         uses: gitleaks/gitleaks-action@v2
         env:

@@ -44,6 +44,8 @@ export default function FlightDetail({
   }, [id]);
 
   useEffect(() => {
+    // load() is async, so the effect body itself sets no state. See useLiveData.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     const timer = setInterval(() => void load(), 5000);
     return () => clearInterval(timer);
