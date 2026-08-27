@@ -6,6 +6,7 @@ import { nextPollDelay } from '../domain';
 import { env } from '../config/env';
 import {
   FLIGHT_DATA_PROVIDER,
+  RetryableProviderError,
   UnrecoverableProviderError,
   type FlightDataProvider,
 } from '../providers/provider.interface';
@@ -82,20 +83,27 @@ export class PollingProcessor extends WorkerHost {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
-        // A permanent provider refusal and an unexpected fault are both handled
-        // the same way here: record it and move the cursor. Retrying a billable
-        // 4xx buys nothing, and retrying an unknown fault at sweep level would
-        // block every flight behind it.
-        this.logger.error(
-          error instanceof UnrecoverableProviderError
-            ? `provider refused a batch of ${batch.length}: ${message}`
-            : `batch of ${batch.length} failed: ${message}`,
-        );
+        // The classification the adapter made has to change what happens next,
+        // or it is decoration. An exhausted balance re-tried every five minutes
+        // is not a retry policy — it is the same request failing 288 times a
+        // day while nobody is told. So a permanent refusal backs off long
+        // enough that a human is the one who resolves it, a rate limit waits
+        // exactly as long as the provider asked, and only an unknown fault
+        // falls back to the middle ground.
+        if (error instanceof UnrecoverableProviderError) {
+          this.logger.error(
+            `provider refused a batch of ${batch.length} and will not be ` +
+              `retried for an hour: ${message}`,
+          );
+        } else {
+          this.logger.error(`batch of ${batch.length} failed: ${message}`);
+        }
 
         await this.markAttempted(
           batch.map((f) => f.id),
           now,
           message,
+          backoffFor(error),
         );
         continue;
       }
@@ -145,16 +153,47 @@ export class PollingProcessor extends WorkerHost {
     ids: string[],
     now: Date,
     reason: string,
+    backoffMs: number,
   ): Promise<void> {
     await this.prisma.flight.updateMany({
       where: { id: { in: ids } },
       data: {
         lastPolledAt: now,
-        nextPollAt: new Date(+now + 5 * 60_000),
+        nextPollAt: new Date(+now + backoffMs),
         lastError: reason.slice(0, 500),
       },
     });
   }
+}
+
+/**
+ * How long a failed batch waits before the sweep picks it up again.
+ *
+ * Exported and pure so the policy is testable without a queue, a database or a
+ * provider — the decision is worth a test, the plumbing around it is not.
+ */
+export const UNRECOVERABLE_BACKOFF_MS = 60 * 60_000;
+export const UNKNOWN_FAULT_BACKOFF_MS = 5 * 60_000;
+/** A provider asking us to wait an hour should not park a flight for a day. */
+export const MAX_RETRY_AFTER_MS = 15 * 60_000;
+
+export function backoffFor(error: unknown): number {
+  if (error instanceof UnrecoverableProviderError) {
+    return UNRECOVERABLE_BACKOFF_MS;
+  }
+
+  // A 429 carries Retry-After. Ignoring it and guessing five minutes is how a
+  // client stays rate limited: too soon and the limit never clears, too late
+  // and we lose the window the provider just handed us.
+  if (
+    error instanceof RetryableProviderError &&
+    error.retryAfterMs !== undefined &&
+    error.retryAfterMs > 0
+  ) {
+    return Math.min(error.retryAfterMs, MAX_RETRY_AFTER_MS);
+  }
+
+  return UNKNOWN_FAULT_BACKOFF_MS;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {

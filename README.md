@@ -330,10 +330,20 @@ comparison leaks through timing how much of a guess was right.
   `volatile-lru` and disables `CONFIG`, so it has to be set at provisioning.
 - **Delayed job promotion needs a running worker**, so scaling the worker to
   zero freezes the queue permanently.
+- **No circuit breaker at the provider boundary.** Failures are classified
+  retryable or permanent, and that classification now drives the backoff — a
+  permanent refusal waits an hour, a rate limit waits exactly as long as the
+  provider asked. What is missing is the layer above: tripping the whole
+  provider open after repeated failures and probing it back. The demo runs on
+  fixture data, so its thresholds would have been tuned against nothing.
+
 - **AeroAPI and Azure infrastructure-as-code are documented, not built.** See
   above for AeroAPI. Untested Bicep would assert things nobody had run.
 
 ## Next
+
+A circuit breaker at the provider boundary, the week there is live traffic to
+tune it against. The retryable/permanent split already exists to drive it.
 
 Transactional outbox at the first side effect that cannot self-heal — a lost
 SSE push is recovered by a refetch, a lost email is not. A reconciler sweep for

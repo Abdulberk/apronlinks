@@ -22,5 +22,11 @@
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
     "strict": true
-  }
+  },
+  // Without these, tsc walks the whole workspace and tries to compile web/ with
+  // the service's config — no jsx, no path aliases — so `pnpm typecheck` fails
+  // on a clean clone for reasons that have nothing to do with the service. The
+  // client carries its own tsconfig and is checked on its own in CI.
+  "include": ["src/**/*", "test/**/*", "scripts/**/*", "prisma/**/*"],
+  "exclude": ["node_modules", "dist", "web", "src/generated"]
 }
