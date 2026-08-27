@@ -5,7 +5,7 @@ changes, records what moved, and raises an operational alert — without raising
 the same one twice.
 
 ```bash
-git clone git@github.com:Abdulberk/apronlinks.git
+git clone https://github.com/Abdulberk/apronlinks.git
 cd apronlinks
 docker compose up --build
 ```
