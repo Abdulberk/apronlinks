@@ -3,6 +3,7 @@ import { IngestModule } from '../src/ingest/ingest.module';
 import { PrismaModule } from '../src/prisma/prisma.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { IngestService } from '../src/ingest/ingest.service';
+import { IngestController } from '../src/ingest/ingest.controller';
 import type { FlightSnapshot } from '../src/domain';
 
 /**
@@ -432,5 +433,110 @@ describe('IngestService — watermark integrity (real Postgres)', () => {
         '2026-08-26T10:05:00.000Z',
       );
     }
+  });
+});
+
+/**
+ * The demo buttons are how a reviewer sees the feature at all, so they get the
+ * same treatment as the rest.
+ *
+ * This exists because of a real bug: the renumber demo looked its flight up by
+ * flight number, which is one of the two fields it changes. It worked once and
+ * then 404'd for good — the project's own thesis, violated in its own demo.
+ */
+describe('IngestController — demo triggers (real Postgres)', () => {
+  let prisma: PrismaService;
+  let controller: IngestController;
+
+  const DEMO_IDS = ['seed-alx314', 'seed-tk1985'];
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, IngestModule],
+    }).compile();
+
+    await moduleRef.init();
+    prisma = moduleRef.get(PrismaService);
+    controller = moduleRef.get(IngestController);
+  });
+
+  beforeEach(async () => {
+    await prisma.flight.deleteMany({
+      where: { providerFlightId: { in: DEMO_IDS } },
+    });
+
+    await prisma.flight.createMany({
+      data: [
+        {
+          providerFlightId: 'seed-alx314',
+          flightNumber: 'ALX314',
+          aircraftRegistration: 'NQ-ATC',
+          flightDate: new Date('2026-08-28'),
+          sourceTimestamp: new Date('2026-08-28T08:00:00Z'),
+          lastSyncedAt: new Date('2026-08-28T08:00:00Z'),
+          providerSource: 'FIXTURE',
+        },
+        {
+          providerFlightId: 'seed-tk1985',
+          flightNumber: 'TK1985',
+          aircraftRegistration: 'TC-JJA',
+          flightDate: new Date('2026-08-28'),
+          sourceTimestamp: new Date('2026-08-28T08:00:00Z'),
+          lastSyncedAt: new Date('2026-08-28T08:00:00Z'),
+          providerSource: 'FIXTURE',
+        },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.flight.deleteMany({
+      where: { providerFlightId: { in: DEMO_IDS } },
+    });
+    await prisma.$disconnect();
+  });
+
+  const flight = (providerFlightId: string) =>
+    prisma.flight.findFirstOrThrow({ where: { providerFlightId } });
+
+  it('renumbers a flight, and can still find it to renumber it back', async () => {
+    const first = await controller.demoNumberChange({});
+    expect(first.outcome).toBe('APPLIED');
+    expect((await flight('seed-tk1985')).flightNumber).toBe('TK1907');
+
+    // The press that used to 404: the flight no longer answers to the number
+    // it was looked up by.
+    const second = await controller.demoNumberChange({});
+    expect(second.outcome).toBe('APPLIED');
+    expect((await flight('seed-tk1985')).flightNumber).toBe('TK1985');
+  });
+
+  it('swaps a tail back and forth without losing the flight', async () => {
+    await controller.demoTailSwap({});
+    expect((await flight('seed-alx314')).aircraftRegistration).toBe('NQ-BRD');
+
+    await controller.demoTailSwap({});
+    expect((await flight('seed-alx314')).aircraftRegistration).toBe('NQ-ATC');
+  });
+
+  it('records every press as its own change rather than collapsing the return', async () => {
+    await controller.demoNumberChange({});
+    await controller.demoNumberChange({});
+    await controller.demoNumberChange({});
+
+    const changes = await prisma.flightChange.findMany({
+      where: { flight: { providerFlightId: 'seed-tk1985' } },
+    });
+
+    // TK1985 → TK1907 → TK1985 → TK1907. Three real changes, not one repeated.
+    expect(changes).toHaveLength(3);
+  });
+
+  it('moves the two demo flights independently', async () => {
+    await controller.demoTailSwap({});
+
+    const untouched = await flight('seed-tk1985');
+    expect(untouched.flightNumber).toBe('TK1985');
+    expect(untouched.revision).toBe(0);
   });
 });

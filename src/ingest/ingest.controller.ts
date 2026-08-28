@@ -105,7 +105,7 @@ export class IngestController {
   @HttpCode(200)
   @Post('demo/tail-swap')
   async demoTailSwap(@Body() body: unknown): Promise<IngestResult> {
-    const flight = await this.demoTarget(body, 'ALX314');
+    const flight = await this.demoTarget(body, 'seed-alx314');
 
     return this.applyDemo(flight, {
       aircraftRegistration:
@@ -121,16 +121,24 @@ export class IngestController {
   @HttpCode(200)
   @Post('demo/number-change')
   async demoNumberChange(@Body() body: unknown): Promise<IngestResult> {
-    const flight = await this.demoTarget(body, 'TK1985');
+    const flight = await this.demoTarget(body, 'seed-tk1985');
 
     return this.applyDemo(flight, {
       flightNumber: flight.flightNumber === 'TK1985' ? 'TK1907' : 'TK1985',
     });
   }
 
+  /**
+   * Found by the provider's id, never by the flight number.
+   *
+   * This is the project's own thesis applied to its demo: the number is one of
+   * the fields being watched for change, so keying on it means the second press
+   * of the renumber button cannot find the flight the first press renamed. It
+   * would work once and 404 for good — on camera, at the worst moment.
+   */
   private async demoTarget(
     body: unknown,
-    fallbackFlightNumber: string,
+    fallbackProviderFlightId: string,
   ): Promise<Flight> {
     const target = z
       .object({ flightId: z.string().uuid().optional() })
@@ -142,7 +150,7 @@ export class IngestController {
             where: { id: target.data.flightId },
           })
         : await this.prisma.flight.findFirst({
-            where: { flightNumber: fallbackFlightNumber },
+            where: { providerFlightId: fallbackProviderFlightId },
           });
 
     if (flight === null) throw new NotFoundException('no flight to change');
