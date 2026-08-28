@@ -164,9 +164,17 @@ export class IngestController {
     return this.ingest.process({
       providerFlightId: flight.providerFlightId,
       ...fields,
-      // Ahead of what is stored, so the ordering guard lets it through. A demo
-      // that trips its own staleness check teaches the wrong lesson.
-      sourceTimestamp: new Date(+flight.sourceTimestamp + 60_000),
+      // Never behind what is stored, and never ahead of the wall clock.
+      //
+      // A fixed +60s marched the stored timestamp minutes into the future after
+      // a few presses, and the signed demo script — which stamps with the real
+      // clock — then came back STALE where the README promises APPLIED. Two
+      // demos of the same system must not be able to lock each other out.
+      //
+      // No epsilon is added, because the ordering guard is a strict `<`: an
+      // equal timestamp is allowed through by design, so two presses inside the
+      // same millisecond both apply and nothing drifts.
+      sourceTimestamp: new Date(Math.max(Date.now(), +flight.sourceTimestamp)),
     });
   }
 }

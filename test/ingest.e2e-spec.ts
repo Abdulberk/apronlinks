@@ -549,3 +549,78 @@ describe('IngestController — demo triggers (real Postgres)', () => {
     expect(untouched.revision).toBe(0);
   });
 });
+
+/**
+ * The two demo paths share one flight's ordering watermark, so they can lock
+ * each other out. They did: the button stamped +60s unconditionally, and after
+ * a few presses the stored timestamp was minutes ahead of the wall clock, so
+ * the signed script — which stamps with the real clock — came back STALE where
+ * the README promises APPLIED.
+ */
+describe('IngestController — demo triggers stay in step with the clock', () => {
+  let prisma: PrismaService;
+  let controller: IngestController;
+  let ingest: IngestService;
+
+  const ID = 'seed-alx314';
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, IngestModule],
+    }).compile();
+
+    await moduleRef.init();
+    prisma = moduleRef.get(PrismaService);
+    controller = moduleRef.get(IngestController);
+    ingest = moduleRef.get(IngestService);
+  });
+
+  beforeEach(async () => {
+    await prisma.flight.deleteMany({ where: { providerFlightId: ID } });
+    // Stamped NOW, not in the past. With a past timestamp the old +60s bug
+    // cannot show itself — six minutes of drift from this morning is still
+    // behind the wall clock, so the test would pass with the bug present.
+    const now = new Date();
+    await prisma.flight.create({
+      data: {
+        providerFlightId: ID,
+        flightNumber: 'ALX314',
+        aircraftRegistration: 'NQ-ATC',
+        flightDate: new Date('2026-08-28'),
+        sourceTimestamp: now,
+        lastSyncedAt: now,
+        providerSource: 'FIXTURE',
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('never pushes the watermark past the wall clock', async () => {
+    for (let i = 0; i < 6; i += 1) await controller.demoTailSwap({});
+
+    const flight = await prisma.flight.findFirstOrThrow({
+      where: { providerFlightId: ID },
+    });
+
+    expect(+flight.sourceTimestamp).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('leaves a real-clock delivery still able to apply after six presses', async () => {
+    for (let i = 0; i < 6; i += 1) await controller.demoTailSwap({});
+
+    // Exactly what `pnpm demo:change` sends: a fresh value, stamped now.
+    const result = await ingest.process(
+      {
+        providerFlightId: ID,
+        aircraftRegistration: 'NQ-XYZ',
+        sourceTimestamp: new Date(),
+      },
+      `clock-check-${Date.now()}`,
+    );
+
+    expect(result.outcome).toBe('APPLIED');
+  });
+});
