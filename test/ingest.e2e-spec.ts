@@ -460,7 +460,16 @@ describe('IngestController — demo triggers (real Postgres)', () => {
     controller = moduleRef.get(IngestController);
   });
 
-  beforeEach(async () => {
+  /**
+   * These are the seeded demo flights, not scratch rows, because the bug being
+   * covered lives in the fallback lookup that only fires when no id is passed —
+   * and that fallback names the seeded flights specifically.
+   *
+   * So the suite has to put them back rather than clean them up. Deleting them
+   * would leave a reviewer who ran the tests looking at a dashboard missing two
+   * flights, including the one the brief names in its own example.
+   */
+  const reset = async (): Promise<void> => {
     await prisma.flight.deleteMany({
       where: { providerFlightId: { in: DEMO_IDS } },
     });
@@ -487,12 +496,12 @@ describe('IngestController — demo triggers (real Postgres)', () => {
         },
       ],
     });
-  });
+  };
+
+  beforeEach(reset);
 
   afterAll(async () => {
-    await prisma.flight.deleteMany({
-      where: { providerFlightId: { in: DEMO_IDS } },
-    });
+    await reset();
     await prisma.$disconnect();
   });
 
