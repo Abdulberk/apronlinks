@@ -34,8 +34,12 @@ export const FLIGHT_DATA_PROVIDER = Symbol('FLIGHT_DATA_PROVIDER');
 /**
  * A provider failure that retrying cannot fix. A bad key, an exhausted credit
  * balance or a malformed request will fail identically on the fifth attempt as
- * on the first — and with these providers each of those attempts is billed, so
- * backing off and trying again spends money to learn nothing.
+ * on the first, so backing off and trying again learns nothing.
+ *
+ * Deliberately not claiming these attempts are billed. FR24 charges per entity
+ * returned and a 4xx returns none, so the cost of a rejected request is not
+ * something their documentation settles. The argument stands without it: the
+ * answer will not change, so asking again is the wrong move whatever it costs.
  */
 export class UnrecoverableProviderError extends Error {
   constructor(
