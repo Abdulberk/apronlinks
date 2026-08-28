@@ -21,7 +21,12 @@ WORKDIR /app
 RUN corepack enable
 ENV NODE_ENV=production
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml prisma.config.ts ./
+# pnpm-workspace.yaml is deliberately NOT copied here. The runtime image
+# carries only the service, so a workspace file declaring a `web` package whose
+# manifest is absent makes pnpm re-resolve the whole tree on every container
+# start — a full install, over the network, before the service boots. The
+# node_modules copied below is already complete and correct.
+COPY package.json pnpm-lock.yaml prisma.config.ts ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/generated ./src/generated

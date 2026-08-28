@@ -39,3 +39,8 @@ docs/api-specs/
 # captured provider fixtures containing live data
 fixtures/*.live.json
 src/generated/
+
+# Written and re-added by `next dev` on every run. Tooling notes, not part
+# of the service.
+web/AGENTS.md
+web/CLAUDE.md

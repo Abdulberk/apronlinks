@@ -234,18 +234,22 @@ would have turned verified research into a plausible guess.
 ## Testing
 
 ```bash
-pnpm test                             # 100 unit tests, no Docker required
+pnpm install
+pnpm test                             # 129 unit tests, no database, ~3s
 
+cp .env.example .env                  # migrate and seed read DATABASE_URL
 docker compose up -d postgres redis
 pnpm exec prisma migrate deploy       # once, to create the tables
-pnpm test:e2e                         # 12 integration tests, real Postgres
+pnpm test:e2e                         # 16 integration tests, real Postgres
 ```
 
 `pnpm install` generates the Prisma client, so the unit tests run on a fresh
 clone with nothing else set up.
 
-Unit tests cover `src/domain` at 100% of lines, branches and functions. The
-threshold is enforced, not aspirational.
+Unit tests cover `src/domain` at 100% of lines, branches and functions today.
+The gate in `package.json` sits at 100 for lines and functions and 95 for
+branches — the slack is there so that adding a guard clause fails review rather
+than the build.
 
 Integration tests run against a real Postgres because everything they assert —
 the compare-and-swap, `ON CONFLICT DO NOTHING`, the unique index, rollback — is
@@ -286,7 +290,8 @@ the status code.
 | `POST /alerts/:id/ack` | Acknowledge |
 | `GET /alerts/stream` | SSE |
 | `POST /ingest/flight-snapshot` | Signed ingest |
-| `POST /ingest/demo/tail-swap` | Local demo affordance |
+| `POST /ingest/demo/tail-swap` | Local demo affordance — swaps the tail |
+| `POST /ingest/demo/number-change` | Local demo affordance — renumbers a flight |
 
 ### Signed ingest
 
