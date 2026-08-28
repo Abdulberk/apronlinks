@@ -12,6 +12,7 @@ import {
 import type { RawBodyRequest } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import type { Flight } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { env } from '../config/env';
 import { IngestService, type IngestResult } from './ingest.service';
@@ -92,13 +93,45 @@ export class IngestController {
    * signed because the browser cannot hold the secret, and it exists only so a
    * change can be triggered on camera without hand-computing an HMAC.
    *
-   * It swaps the flight's registration to whichever of the two demo values it
-   * is not currently showing, so pressing it repeatedly produces the flip-flop
-   * the history view is there to show.
+   * Both watched fields get a trigger, because the brief asks for detection of
+   * the flight number *or* the registration and a demo that can only show one
+   * of them leaves the reviewer taking the other on trust.
+   *
+   * Each swaps between two values rather than setting one, so pressing a button
+   * repeatedly produces the flip-flop the history view exists to show — and
+   * proves that returning to a previous value is recorded as another change
+   * rather than suppressed as a repeat.
    */
   @HttpCode(200)
   @Post('demo/tail-swap')
   async demoTailSwap(@Body() body: unknown): Promise<IngestResult> {
+    const flight = await this.demoTarget(body, 'ALX314');
+
+    return this.applyDemo(flight, {
+      aircraftRegistration:
+        flight.aircraftRegistration === 'NQ-ATC' ? 'NQ-BRD' : 'NQ-ATC',
+    });
+  }
+
+  /**
+   * Deliberately a different flight from the tail swap. Renumbering ALX314
+   * would move the very flight the brief names in its example, and the two
+   * demos would fight over the same row on screen.
+   */
+  @HttpCode(200)
+  @Post('demo/number-change')
+  async demoNumberChange(@Body() body: unknown): Promise<IngestResult> {
+    const flight = await this.demoTarget(body, 'TK1985');
+
+    return this.applyDemo(flight, {
+      flightNumber: flight.flightNumber === 'TK1985' ? 'TK1907' : 'TK1985',
+    });
+  }
+
+  private async demoTarget(
+    body: unknown,
+    fallbackFlightNumber: string,
+  ): Promise<Flight> {
     const target = z
       .object({ flightId: z.string().uuid().optional() })
       .safeParse(body ?? {});
@@ -109,17 +142,20 @@ export class IngestController {
             where: { id: target.data.flightId },
           })
         : await this.prisma.flight.findFirst({
-            where: { flightNumber: 'ALX314' },
+            where: { flightNumber: fallbackFlightNumber },
           });
 
-    if (flight === null) throw new NotFoundException('no flight to swap');
+    if (flight === null) throw new NotFoundException('no flight to change');
+    return flight;
+  }
 
-    const swapped =
-      flight.aircraftRegistration === 'NQ-ATC' ? 'NQ-BRD' : 'NQ-ATC';
-
+  private applyDemo(
+    flight: Flight,
+    fields: { aircraftRegistration?: string; flightNumber?: string },
+  ): Promise<IngestResult> {
     return this.ingest.process({
       providerFlightId: flight.providerFlightId,
-      aircraftRegistration: swapped,
+      ...fields,
       // Ahead of what is stored, so the ordering guard lets it through. A demo
       // that trips its own staleness check teaches the wrong lesson.
       sourceTimestamp: new Date(+flight.sourceTimestamp + 60_000),

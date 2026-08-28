@@ -115,6 +115,7 @@ const PAGE = `<!doctype html>
   <span id="count" class="pill" style="color:var(--dim)">0 unread</span>
   <span class="spacer"></span>
   <button id="swap">Simulate registration change</button>
+  <button id="renum">Simulate flight number change</button>
   <button id="refresh" class="ghost">Refresh</button>
 </header>
 
@@ -227,13 +228,21 @@ async function refresh() {
   if (openFlight) await loadHistory(openFlight);
 }
 
-$('swap').onclick = async () => {
-  const res = await fetch('/ingest/demo/tail-swap', { method: 'POST' });
-  const result = await res.json();
-  $('swap').textContent = 'Simulate registration change (' + result.outcome + ')';
-  setTimeout(() => { $('swap').textContent = 'Simulate registration change'; }, 2500);
-  await refresh();
-};
+// Both watched fields get a button. The brief asks for detection of the
+// flight number OR the registration, and a demo that can only show one of
+// them asks the reviewer to take the other on trust.
+function wireDemo(id, path, label) {
+  $(id).onclick = async () => {
+    const res = await fetch(path, { method: 'POST' });
+    const result = await res.json();
+    $(id).textContent = label + ' (' + result.outcome + ')';
+    setTimeout(() => { $(id).textContent = label; }, 2500);
+    await refresh();
+  };
+}
+
+wireDemo('swap', '/ingest/demo/tail-swap', 'Simulate registration change');
+wireDemo('renum', '/ingest/demo/number-change', 'Simulate flight number change');
 
 $('refresh').onclick = refresh;
 

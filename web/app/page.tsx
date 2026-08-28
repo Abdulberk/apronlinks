@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { simulateTailSwap } from '@/lib/api';
+import { simulateNumberChange, simulateTailSwap } from '@/lib/api';
 import { useLiveData } from '@/hooks/useLiveData';
 import { AlertFeed } from '@/components/AlertFeed';
 import { FlightBoard } from '@/components/FlightBoard';
@@ -10,15 +10,17 @@ import { Panel, SectionLabel, Stat } from '@/components/primitives';
 export default function Dashboard() {
   const { flights, alerts, unread, connection, error, loaded, refresh } =
     useLiveData();
-  const [simulating, setSimulating] = useState(false);
+  const [simulating, setSimulating] = useState<null | 'tail' | 'number'>(null);
 
-  async function simulate() {
-    setSimulating(true);
+  // Two triggers, because the service watches two fields. Being able to raise
+  // only one of them would leave the other looking like a claim.
+  async function simulate(which: 'tail' | 'number') {
+    setSimulating(which);
     try {
-      await simulateTailSwap();
+      await (which === 'tail' ? simulateTailSwap() : simulateNumberChange());
       await refresh();
     } finally {
-      setSimulating(false);
+      setSimulating(null);
     }
   }
 
@@ -46,11 +48,22 @@ export default function Dashboard() {
 
           <button
             type="button"
-            onClick={() => void simulate()}
-            disabled={simulating}
+            onClick={() => void simulate('tail')}
+            disabled={simulating !== null}
             className="rounded bg-signal px-3 py-1.5 text-[12px] font-semibold text-ground transition-[filter] hover:brightness-110 disabled:opacity-50"
           >
-            {simulating ? 'Swapping…' : 'Simulate aircraft change'}
+            {simulating === 'tail' ? 'Swapping…' : 'Simulate aircraft change'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void simulate('number')}
+            disabled={simulating !== null}
+            className="rounded border border-signal/60 px-3 py-1.5 text-[12px] font-semibold text-signal transition-colors hover:bg-signal/10 disabled:opacity-50"
+          >
+            {simulating === 'number'
+              ? 'Renumbering…'
+              : 'Simulate flight number change'}
           </button>
 
           <button

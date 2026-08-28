@@ -92,11 +92,27 @@ export async function acknowledge(id: string): Promise<void> {
 
 /** The demo trigger. Swaps the tail code so a change flows through for real. */
 export async function simulateTailSwap(flightId?: string): Promise<void> {
-  const response = await fetch(`${API}/ingest/demo/tail-swap`, {
+  return simulateChange('tail-swap', flightId);
+}
+
+/**
+ * The brief watches two fields, so the demo has to be able to move either one.
+ * A screen that can only produce aircraft changes asks the reviewer to take
+ * flight-number detection on trust.
+ */
+export async function simulateNumberChange(flightId?: string): Promise<void> {
+  return simulateChange('number-change', flightId);
+}
+
+async function simulateChange(
+  path: 'tail-swap' | 'number-change',
+  flightId?: string,
+): Promise<void> {
+  const response = await fetch(`${API}/ingest/demo/${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(flightId ? { flightId } : {}),
   });
 
-  if (!response.ok) throw new Error(`tail swap answered ${response.status}`);
+  if (!response.ok) throw new Error(`demo change answered ${response.status}`);
 }

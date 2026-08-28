@@ -29,7 +29,10 @@ It is deliberately outside the compose stack. A Next build takes minutes, and
 
 ## Seeing it work
 
-Press **Simulate registration change** on the dashboard, or:
+The dashboard carries a button for each watched field — **Simulate registration
+change** and **Simulate flight number change** — because a demo that can only
+move one of them asks the reviewer to take the other on trust. Or from a
+terminal:
 
 ```bash
 pnpm demo:change            # raise a tail change
@@ -45,7 +48,9 @@ first delivery   : { outcome: 'APPLIED',   changes: 1, alerts: 1 }
 replayed delivery: { outcome: 'DUPLICATE', changes: 0, alerts: 0 }
 ```
 
-Press the button repeatedly and the flight flips between `NQ-ATC` and `NQ-BRD`.
+Press either button repeatedly and the value flips between its two demo values —
+the tail between `NQ-ATC` and `NQ-BRD`, the number between `TK1985` and
+`TK1907`.
 Click the flight number to expand its history: every leg is there, because
 `ATC → BRD → ATC → BRD` is three real changes, not one repeated twice.
 
@@ -122,7 +127,7 @@ web/           The operator UI. Next.js 16, React 19, Tailwind 4.
 ```
 
 `src/domain` is the only layer with no framework coupling, and that is why
-`pnpm test` finishes in about two seconds with no Docker and no database: the
+`pnpm test` finishes in about three seconds with no Docker and no database: the
 logic being graded has nothing to boot.
 
 ### Polling cadence tracks operational urgency
@@ -139,8 +144,10 @@ twenty minutes before departure means a ground crew has to move equipment now.
 | Beyond | 6 hours |
 | Arrived and settled, or cancelled | stop |
 
-About 87% fewer polls per flight per day than a fixed one-minute cadence, and
-fresher in the window where freshness matters.
+Following one flight from two days out through landing costs about 200 polls
+against roughly 3,000 for a flat one-minute cadence, and it is no less current in
+the window that matters. That is counted from the cadence function in
+`poll-budget.spec.ts`, not asserted next to it.
 
 It runs as **one repeating sweep**, not a chain of self-scheduling jobs. The
 chain is the tempting shape and its failure mode only appears in production: a
