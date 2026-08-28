@@ -25,19 +25,7 @@ export class FixtureProvider implements FlightDataProvider {
   /** Matches the real provider's cap so batching behaves the same either way. */
   readonly maxIdsPerQuery = 10;
 
-  /** Values staged by the demo, applied on the next poll and then cleared. */
-  private readonly pending = new Map<string, string>();
-
   constructor(private readonly prisma: PrismaService) {}
-
-  /**
-   * Stages a registration for a flight. The change is not written here — it is
-   * handed to the poller, so the demo exercises the same path production uses
-   * rather than a shortcut around it.
-   */
-  stageRegistration(providerFlightId: string, registration: string): void {
-    this.pending.set(providerFlightId, registration);
-  }
 
   async fetchSnapshots(providerFlightIds: string[]): Promise<FlightSnapshot[]> {
     if (providerFlightIds.length === 0) return [];
@@ -52,13 +40,10 @@ export class FixtureProvider implements FlightDataProvider {
     const observedAt = new Date();
 
     return flights.map((flight) => {
-      const staged = this.pending.get(flight.providerFlightId);
-      this.pending.delete(flight.providerFlightId);
-
       return {
         providerFlightId: flight.providerFlightId,
         flightNumber: flight.flightNumber,
-        aircraftRegistration: staged ?? flight.aircraftRegistration,
+        aircraftRegistration: flight.aircraftRegistration,
         // Always ahead of what is stored. A provider's clock moves forward
         // between observations, and a snapshot that did not would be dropped by
         // the ordering guard before it reached change detection.
