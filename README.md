@@ -220,9 +220,11 @@ sandbox. Some of it changed the design:
   says 10.** The lower value is the default, and it is configurable rather than
   hard-coded. Note that FR24 bills per returned entity, so batching is a
   rate-limit control, not a cost control.
-- **Anything 4xx other than 408 and 429 is permanent.** Every attempt is billed,
-  so retrying a request that was wrong the first time spends money to learn
-  nothing. FR24 documents 402, credit limit reached, on almost every endpoint.
+- **Anything 4xx other than 408 and 429 is permanent.** A request that was wrong
+  the first time is wrong the fifth time, so retrying it learns nothing whatever
+  it costs — deliberately not claiming these attempts are billed, since FR24
+  charges per entity returned and a 4xx returns none. FR24 documents 402, credit
+  limit reached, on almost every endpoint.
 
 FlightAware AeroAPI was evaluated and **not built**: no key, alerts are not on
 the free tier, and its spec contains no signing mechanism at all, so the
