@@ -149,3 +149,63 @@ describe('parseBatch', () => {
     });
   });
 });
+
+describe('toSnapshot — movement times', () => {
+  const observedAt = new Date('2026-08-30T18:00:00Z');
+
+  const record = (over: Record<string, unknown> = {}) => ({
+    fr24_id: 'fr24-1',
+    flight: 'TK1985',
+    reg: 'TC-JJA',
+    last_seen: '2026-08-30T17:00:00Z',
+    ...over,
+  });
+
+  it('carries a takeoff time through so status can be derived', () => {
+    const snapshot = toSnapshot(
+      record({ datetime_takeoff: '2026-08-30T12:00:00Z' }),
+      observedAt,
+    );
+
+    expect(snapshot.actualOff).toEqual(new Date('2026-08-30T12:00:00Z'));
+    expect(snapshot.actualOn).toBeUndefined();
+  });
+
+  it('carries a landing time through', () => {
+    const snapshot = toSnapshot(
+      record({
+        datetime_takeoff: '2026-08-30T12:00:00Z',
+        datetime_landed: '2026-08-30T15:00:00Z',
+      }),
+      observedAt,
+    );
+
+    expect(snapshot.actualOn).toEqual(new Date('2026-08-30T15:00:00Z'));
+  });
+
+  /**
+   * Absent must stay absent rather than becoming null. Both mean "keep what we
+   * hold", so the behaviour is the same either way — but a null would claim the
+   * provider said "unknown" when it said nothing at all.
+   */
+  it('leaves movement absent when the provider reports none', () => {
+    const snapshot = toSnapshot(record(), observedAt);
+
+    expect('actualOff' in snapshot).toBe(false);
+    expect('actualOn' in snapshot).toBe(false);
+  });
+
+  /**
+   * flight_ended closes the tracking session, which happens at the end of every
+   * ordinary flight. Reading it as a cancellation would mark almost every
+   * completed flight CANCELLED and stop tracking it for the wrong reason.
+   */
+  it('does not read flight_ended as a cancellation', () => {
+    const snapshot = toSnapshot(
+      record({ flight_ended: true, datetime_landed: '2026-08-30T15:00:00Z' }),
+      observedAt,
+    );
+
+    expect(snapshot.cancelled).toBeUndefined();
+  });
+});

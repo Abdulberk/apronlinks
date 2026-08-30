@@ -50,6 +50,11 @@ export class FixtureProvider implements FlightDataProvider {
         sourceTimestamp: new Date(
           Math.max(+observedAt, +flight.sourceTimestamp + 1000),
         ),
+        // Echoed like every other field. Without these the fixture would be
+        // the one provider that silently drops movement, and a status set by
+        // the seed would be indistinguishable from one the merge rule kept.
+        actualOff: flight.actualOff,
+        actualOn: flight.actualOn,
       };
     });
   }

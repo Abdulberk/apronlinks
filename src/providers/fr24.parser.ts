@@ -77,6 +77,21 @@ export function toSnapshot(
     flightNumber: record.flight,
     aircraftRegistration: record.reg,
     sourceTimestamp: stamp ? parseProviderTimestamp(stamp) : observedAt,
+    // Movement times, so status is derived from what the provider reports
+    // rather than left at its default. Absent is left absent rather than
+    // turned into null: the merge rule reads undefined as `the provider said
+    // nothing`, and a null here would claim the provider said `unknown`.
+    //
+    // `flight_ended` is deliberately NOT mapped to `cancelled`. It means the
+    // tracking session closed, which is what happens at the end of every
+    // ordinary flight. FR24 publishes no cancellation field at all, so
+    // `cancelled` stays unset here and CANCELLED is unreachable under FR24.
+    ...(record.datetime_takeoff
+      ? { actualOff: parseProviderTimestamp(record.datetime_takeoff) }
+      : {}),
+    ...(record.datetime_landed
+      ? { actualOn: parseProviderTimestamp(record.datetime_landed) }
+      : {}),
   };
 }
 

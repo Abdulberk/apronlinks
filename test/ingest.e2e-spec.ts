@@ -1,10 +1,12 @@
 import { Test } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { IngestModule } from '../src/ingest/ingest.module';
 import { PrismaModule } from '../src/prisma/prisma.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { IngestService } from '../src/ingest/ingest.service';
 import { IngestController } from '../src/ingest/ingest.controller';
 import type { FlightSnapshot } from '../src/domain';
+import type { Flight } from '../src/generated/prisma/client';
 
 /**
  * These run against the real Postgres from docker-compose, not an in-memory
@@ -748,5 +750,66 @@ describe('IngestService — movement and status (real Postgres)', () => {
     const after = await read();
     expect(after.status).toBe('RESULT_UNKNOWN');
     expect(after.arrivedAt).toBeNull();
+  });
+});
+
+/**
+ * The demo lookup used to search by providerFlightId alone. That id only means
+ * something inside the provider that issued it — which is why the schema keys
+ * on the pair — so an unscoped lookup found a row belonging to another
+ * provider. Ingest then failed to match it in its own namespace and created a
+ * SECOND flight for the same aircraft.
+ *
+ * Proved by removing the fixture row and leaving only a same-id FR24 row: a
+ * scoped lookup correctly finds nothing, an unscoped one finds the wrong
+ * flight. The seeded row is put back afterwards — the dashboard demo depends
+ * on it.
+ */
+describe('IngestController — demo lookup is scoped by provider', () => {
+  let prisma: PrismaService;
+  let controller: IngestController;
+  let seeded: Flight;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, IngestModule],
+    }).compile();
+
+    await moduleRef.init();
+    prisma = moduleRef.get(PrismaService);
+    controller = moduleRef.get(IngestController);
+
+    seeded = await prisma.flight.findFirstOrThrow({
+      where: { providerSource: 'FIXTURE', providerFlightId: 'seed-alx314' },
+    });
+
+    await prisma.flight.delete({ where: { id: seeded.id } });
+    await prisma.flight.create({
+      data: {
+        ...seeded,
+        id: undefined,
+        providerSource: 'FR24',
+        revision: 0,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.flight.deleteMany({
+      where: { providerSource: 'FR24', providerFlightId: 'seed-alx314' },
+    });
+    await prisma.flight.create({ data: { ...seeded, id: undefined } });
+    await prisma.$disconnect();
+  });
+
+  it('will not reach into another provider namespace', async () => {
+    await expect(controller.demoTailSwap({})).rejects.toThrow(
+      NotFoundException,
+    );
+
+    // And nothing was minted on the way past.
+    expect(
+      await prisma.flight.count({ where: { providerFlightId: 'seed-alx314' } }),
+    ).toBe(1);
   });
 });

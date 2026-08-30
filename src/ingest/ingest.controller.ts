@@ -24,12 +24,25 @@ import { verifySignature } from './signature';
  * means a request captured inside the signature's five-minute window still
  * cannot be replayed to any effect.
  */
+/**
+ * Which namespace the demo buttons look in. The seed writes FIXTURE rows, so a
+ * lookup scoped to anything else finds nothing — which is the correct outcome:
+ * the demo is a fixture affordance and has no meaning against a live provider.
+ */
+const DEMO_SOURCE = 'FIXTURE' as const;
+
 const snapshotSchema = z.object({
   eventId: z.string().min(1).max(128),
   providerFlightId: z.string().min(1).max(64),
   flightNumber: z.string().max(16).nullish(),
   aircraftRegistration: z.string().max(16).nullish(),
   sourceTimestamp: z.iso.datetime(),
+  // Movement times are accepted but never alerted on. A caller that knows the
+  // flight left should be able to say so through the same signed door the
+  // watched fields come through, rather than needing a second endpoint.
+  actualOff: z.iso.datetime().nullish(),
+  actualOn: z.iso.datetime().nullish(),
+  cancelled: z.boolean().optional(),
 });
 
 @Controller('ingest')
@@ -83,6 +96,30 @@ export class IngestController {
         flightNumber: parsed.data.flightNumber,
         aircraftRegistration: parsed.data.aircraftRegistration,
         sourceTimestamp: new Date(parsed.data.sourceTimestamp),
+        // Absent stays absent. `?? undefined` would be wrong here: the wire
+        // format distinguishes a field that was omitted from one sent as null,
+        // and the merge rule treats them the same only because both mean
+        // `keep what we hold` — flattening them would still be a lie about
+        // what the caller said.
+        ...(parsed.data.actualOff !== undefined
+          ? {
+              actualOff:
+                parsed.data.actualOff === null
+                  ? null
+                  : new Date(parsed.data.actualOff),
+            }
+          : {}),
+        ...(parsed.data.actualOn !== undefined
+          ? {
+              actualOn:
+                parsed.data.actualOn === null
+                  ? null
+                  : new Date(parsed.data.actualOn),
+            }
+          : {}),
+        ...(parsed.data.cancelled !== undefined
+          ? { cancelled: parsed.data.cancelled }
+          : {}),
       },
       parsed.data.eventId,
     );
@@ -150,7 +187,16 @@ export class IngestController {
             where: { id: target.data.flightId },
           })
         : await this.prisma.flight.findFirst({
-            where: { providerFlightId: fallbackProviderFlightId },
+            // Scoped by source as well as id. The composite key exists because
+            // an id only means something inside the provider that issued it,
+            // and an unscoped lookup here found the FIXTURE seed row while the
+            // service was configured for FR24 — ingest then failed to match it
+            // in the FR24 namespace and created a second flight for the same
+            // aircraft.
+            where: {
+              providerSource: DEMO_SOURCE,
+              providerFlightId: fallbackProviderFlightId,
+            },
           });
 
     if (flight === null) throw new NotFoundException('no flight to change');
