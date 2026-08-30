@@ -39,6 +39,23 @@ export interface FlightSnapshot {
   flightNumber?: string | null;
   aircraftRegistration?: string | null;
   sourceTimestamp: Date;
+
+  /**
+   * Movement times, when the provider reports them.
+   *
+   * These are not watched for change — the brief names the flight number and
+   * the registration and nothing else — but they are what `deriveStatus` needs,
+   * and status is what the polling cadence reads. Without them a flight is
+   * SCHEDULED forever, is polled on the unscheduled watch forever, and never
+   * stops being tracked.
+   *
+   * `undefined` keeps whatever we already hold, exactly like the two watched
+   * fields. A provider that stops sending a takeoff time has not un-departed
+   * the aircraft.
+   */
+  actualOff?: Date | null;
+  actualOn?: Date | null;
+  cancelled?: boolean;
 }
 
 export interface DetectedChange {

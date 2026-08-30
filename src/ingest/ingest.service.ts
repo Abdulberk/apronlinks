@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AlertStream } from '../alerts/alert-stream';
-import { UNKNOWN_FLIGHT_NUMBER, detectChanges, formatAlert } from '../domain';
+import {
+  UNKNOWN_FLIGHT_NUMBER,
+  detectChanges,
+  formatAlert,
+  movementChanged,
+  nextStatus,
+} from '../domain';
 import type { FlightSnapshot } from '../domain';
 import type {
   IngestOutcome,
@@ -168,6 +174,14 @@ export class IngestService {
         };
       }
 
+      // Movement is resolved before L2, because a snapshot can move the flight
+      // from SCHEDULED to AIRBORNE without touching either watched field — and
+      // that transition still has to be written, or the cadence never learns
+      // the aircraft left and the flight is polled on the pre-departure tier
+      // for ever.
+      const movement = nextStatus(flight, snapshot);
+      const moved = movementChanged(flight, movement);
+
       // L2.
       const changes = detectChanges(flight, snapshot);
 
@@ -190,6 +204,18 @@ export class IngestService {
             sourceTimestamp: snapshot.sourceTimestamp,
             lastSyncedAt: new Date(),
             lastPolledAt: new Date(),
+            // Movement rides on the same guarded write. It needs no revision
+            // bump because no watched field moved and nothing is recorded in
+            // history — but it must not be lost either, so it travels with the
+            // watermark under the same timestamp predicate.
+            ...(moved
+              ? {
+                  actualOff: movement.actualOff,
+                  actualOn: movement.actualOn,
+                  status: movement.status,
+                  arrivedAt: movement.arrivedAt,
+                }
+              : {}),
           },
         });
         await this.recordOutcome(tx, eventId, 'NO_CHANGE');
@@ -209,6 +235,14 @@ export class IngestService {
         sourceTimestamp: snapshot.sourceTimestamp,
         lastSyncedAt: new Date(),
         lastPolledAt: new Date(),
+        ...(moved
+          ? {
+              actualOff: movement.actualOff,
+              actualOn: movement.actualOn,
+              status: movement.status,
+              arrivedAt: movement.arrivedAt,
+            }
+          : {}),
       };
 
       for (const change of changes) {
@@ -298,6 +332,10 @@ export class IngestService {
         flightDate: new Date(
           snapshot.sourceTimestamp.toISOString().slice(0, 10),
         ),
+        // A first sighting can already be airborne — a provider has no
+        // obligation to show us a flight before it leaves. Deriving here keeps
+        // the cadence correct from the first row rather than from the second.
+        ...movementOf(snapshot),
         // Written here, not left null. If the ordering column only starts
         // moving at the first change, every flight spends the longest part of
         // its life with the staleness guard switched off.
@@ -325,4 +363,22 @@ export class IngestService {
 
 function hashSnapshot(snapshot: FlightSnapshot): string {
   return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
+/**
+ * The movement columns for a flight we are seeing for the first time. Same rule
+ * as everywhere else: an absent time is not a time, so it stays null and the
+ * status falls back to SCHEDULED.
+ */
+function movementOf(snapshot: FlightSnapshot): {
+  actualOff: Date | null;
+  actualOn: Date | null;
+  status: ReturnType<typeof nextStatus>['status'];
+  arrivedAt: Date | null;
+} {
+  const { actualOff, actualOn, status, arrivedAt } = nextStatus(
+    { actualOff: null, actualOn: null, status: 'SCHEDULED', arrivedAt: null },
+    snapshot,
+  );
+  return { actualOff, actualOn, status, arrivedAt };
 }

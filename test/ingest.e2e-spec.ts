@@ -624,3 +624,129 @@ describe('IngestController — demo triggers stay in step with the clock', () =>
     expect(result.outcome).toBe('APPLIED');
   });
 });
+
+/**
+ * Status used to be a column nothing ever wrote: deriveStatus was implemented
+ * and fully tested but never called, because FlightSnapshot carried no times.
+ * A flight therefore stayed SCHEDULED for ever, sat on the unscheduled watch
+ * for ever, and never stopped being tracked.
+ */
+describe('IngestService — movement and status (real Postgres)', () => {
+  let prisma: PrismaService;
+  let ingest: IngestService;
+
+  const ID = 'e2e-move';
+  const OFF = new Date('2026-08-30T12:00:00Z');
+  const ON = new Date('2026-08-30T15:00:00Z');
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, IngestModule],
+    }).compile();
+
+    await moduleRef.init();
+    prisma = moduleRef.get(PrismaService);
+    ingest = moduleRef.get(IngestService);
+  });
+
+  beforeEach(async () => {
+    await prisma.flight.deleteMany({ where: { providerFlightId: ID } });
+    await prisma.ingestEvent.deleteMany({ where: { providerFlightId: ID } });
+  });
+
+  afterAll(async () => {
+    await prisma.flight.deleteMany({ where: { providerFlightId: ID } });
+    await prisma.ingestEvent.deleteMany({ where: { providerFlightId: ID } });
+    await prisma.$disconnect();
+  });
+
+  const send = (over: Partial<FlightSnapshot>, at: string) =>
+    ingest.process({
+      providerFlightId: ID,
+      sourceTimestamp: new Date(at),
+      ...over,
+    });
+
+  const read = () =>
+    prisma.flight.findFirstOrThrow({ where: { providerFlightId: ID } });
+
+  it('carries a flight from scheduled to airborne to arrived', async () => {
+    await send({ flightNumber: 'TK1985' }, '2026-08-30T10:00:00Z');
+    expect((await read()).status).toBe('SCHEDULED');
+
+    await send({ actualOff: OFF }, '2026-08-30T12:01:00Z');
+    const airborne = await read();
+    expect(airborne.status).toBe('AIRBORNE');
+    expect(airborne.arrivedAt).toBeNull();
+
+    await send({ actualOn: ON }, '2026-08-30T15:01:00Z');
+    const arrived = await read();
+    expect(arrived.status).toBe('ARRIVED');
+    expect(arrived.arrivedAt).toEqual(ON);
+  });
+
+  /**
+   * A status move is not one of the two watched fields, so it must be applied
+   * without bumping the revision, writing history, or raising an alert.
+   */
+  it('applies a status move without an alert, a change row or a revision bump', async () => {
+    const created = await send(
+      { flightNumber: 'TK1985' },
+      '2026-08-30T10:00:00Z',
+    );
+    const before = await read();
+
+    const result = await send({ actualOff: OFF }, '2026-08-30T12:01:00Z');
+    const after = await read();
+
+    expect(result.outcome).toBe('NO_CHANGE');
+    expect(result.alerts).toBe(0);
+    expect(after.status).toBe('AIRBORNE');
+    expect(after.revision).toBe(before.revision);
+    expect(
+      await prisma.flightChange.count({
+        where: { flightId: created.flightId! },
+      }),
+    ).toBe(0);
+  });
+
+  it('records a tail change and the departure from the same snapshot', async () => {
+    await send(
+      { flightNumber: 'TK1985', aircraftRegistration: 'TC-JJA' },
+      '2026-08-30T10:00:00Z',
+    );
+
+    const result = await send(
+      { aircraftRegistration: 'TC-LGA', actualOff: OFF },
+      '2026-08-30T12:01:00Z',
+    );
+    const after = await read();
+
+    expect(result.outcome).toBe('APPLIED');
+    expect(result.alerts).toBe(1);
+    expect(after.aircraftRegistration).toBe('TC-LGA');
+    expect(after.status).toBe('AIRBORNE');
+    expect(after.revision).toBe(1);
+  });
+
+  it('does not un-depart a flight when a later snapshot omits the takeoff', async () => {
+    await send({ flightNumber: 'TK1985' }, '2026-08-30T10:00:00Z');
+    await send({ actualOff: OFF }, '2026-08-30T12:01:00Z');
+
+    await send({ flightNumber: 'TK1985' }, '2026-08-30T12:05:00Z');
+
+    const after = await read();
+    expect(after.status).toBe('AIRBORNE');
+    expect(after.actualOff).toEqual(OFF);
+  });
+
+  it('leaves a never-confirmed arrival tracked rather than settled', async () => {
+    await send({ flightNumber: 'TK1985' }, '2026-08-30T10:00:00Z');
+    await send({ actualOff: OFF }, '2026-08-30T12:01:00Z');
+    await send({ actualOn: new Date(+OFF) }, '2026-08-30T15:01:00Z');
+
+    const after = await read();
+    expect(after.status).toBe('RESULT_UNKNOWN');
+    expect(after.arrivedAt).toBeNull();
+  });
+});

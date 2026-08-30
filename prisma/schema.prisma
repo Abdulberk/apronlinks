@@ -90,7 +90,22 @@ model Flight {
   /// is null for every FR24-sourced flight and the polling tiers fall back to
   /// deriving cadence from status.
   scheduledDeparture DateTime? @db.Timestamptz(3)
+
+  /// Movement times as the provider reports them. Runway departure ("off") and
+  /// runway arrival ("on"), stored because `deriveStatus` needs both to tell an
+  /// arrival apart from the case FlightAware calls a result unknown: off and on
+  /// set to the SAME instant means "probably landed, we never confirmed it".
+  /// Treating that as ARRIVED would stop tracking a flight nobody confirmed.
+  actualOff DateTime? @db.Timestamptz(3)
+  actualOn  DateTime? @db.Timestamptz(3)
+
+  /// DERIVED from the two columns above, never read from a provider field.
+  /// Not a watched field: a status move is applied and recorded in the flight
+  /// row, but raises no alert, because the brief watches the flight number and
+  /// the registration and nothing else.
   status             FlightStatus @default(SCHEDULED)
+  /// The moment tracking may begin winding down. Set from actualOn when a
+  /// flight genuinely arrives, which is what the cadence function reads.
   arrivedAt          DateTime?    @db.Timestamptz(3)
 
   /// Optimistic lock. Every state transition is a compare-and-swap on this
